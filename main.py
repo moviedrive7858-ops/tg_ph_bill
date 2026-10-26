@@ -12,13 +12,16 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import database as db
 
-# ==========================================
-# ⚙️ အချက်အလက်များ ထည့်သွင်းရန် နေရာ
-# ==========================================
-BOT_TOKEN = "YOUR_BOT_TOKEN_HERE"
-OWNER_ID = 123456789                  # သင့် Telegram User ID
-SPIN_TOPIC_ID = 12345                # Group ထဲရှိ Lucky Spin Topic Thread ID
-ADMIN_LOG_GROUP_ID = -1001234567890   # ဖုန်းနံပါတ်စာရင်းနှင့် Backup ပို့မည့် Admin Group ID
+# ==========================================================
+# ⚙️ Render Environment Variables မှ လျှို့ဝှက်တန်ဖိုးများ ဆွဲယူခြင်း
+# ==========================================================
+BOT_TOKEN = os.environ.get("BOT_TOKEN")
+OWNER_ID = int(os.environ.get("OWNER_ID", 0))
+SPIN_TOPIC_ID = int(os.environ.get("SPIN_TOPIC_ID", 0))
+ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))
+
+if not BOT_TOKEN:
+    raise ValueError("ERROR: Render Environment Variables တွင် BOT_TOKEN မသတ်မှတ်ရသေးပါ။")
 
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
@@ -28,7 +31,9 @@ class RedeemState(StatesGroup):
     waiting_for_operator = State()
     waiting_for_phone = State()
 
-# --- UptimeRobot အတွက် Web Server ---
+# ==========================================================
+# 🌐 UptimeRobot အတွက် Health Check Web Server
+# ==========================================================
 async def health_check(request):
     return web.Response(text="Bot is running active!")
 
@@ -41,23 +46,27 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-# --- Daily Backup Task (သီးသန့် Admin Group သို့ ပို့မည်) ---
+# ==========================================================
+# 📦 Daily Database Auto-Backup (သီးသန့် Admin Group သို့ ပို့မည်)
+# ==========================================================
 async def auto_backup_task():
     while True:
-        await asyncio.sleep(86400)
+        await asyncio.sleep(86400)  # ၂၄ နာရီတစ်ကြိမ်
         try:
             today = datetime.now().strftime("%Y-%m-%d")
-            if os.path.exists(db.DB_NAME):
+            if os.path.exists(db.DB_NAME) and ADMIN_LOG_GROUP_ID != 0:
                 backup_file = FSInputFile(db.DB_NAME, filename=f"backup_{today}.db")
                 await bot.send_document(
                     chat_id=ADMIN_LOG_GROUP_ID,
                     document=backup_file,
-                    caption=f"📦 **Daily Database Backup** ({today})"
+                    caption=f"📦 **Daily Database Backup** ({today})\n\nစနစ်ပျက်စီးခဲ့ပါက ဤဖိုင်ကို ပြန်လည်အသုံးပြုနိုင်ပါသည်။"
                 )
         except Exception as e:
             print(f"Backup Error: {e}")
 
-# --- Keyboard ထုတ်ပေးသည့် Function ---
+# ==========================================================
+# 🎮 Lucky Spin Keyboards & Handlers
+# ==========================================================
 def get_spin_keyboard(user_id: int, name: str) -> InlineKeyboardMarkup:
     display_name = name[:15] + "..." if len(name) > 15 else name
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -66,7 +75,7 @@ def get_spin_keyboard(user_id: int, name: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="🎁 ဖုန်းဘေလ် လဲမည် (1,000 Coins)", callback_data=f"redeem_{user_id}")]
     ])
 
-# --- /start Command (Private Chat တွင် Link ယူခြင်း) ---
+# /start command (Private chat တွင် မိမိ link ရယူခြင်း)
 @dp.message(CommandStart())
 async def start_cmd(message: types.Message):
     await db.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
@@ -78,7 +87,7 @@ async def start_cmd(message: types.Message):
         f"Group ထဲသို့ လူ ၂ ယောက် ဖိတ်ခေါ်တိုင်း Spin Token ၁ ခု ရရှိမည်ဖြစ်ပြီး Lucky Spin Topic တွင် ကစားနိုင်ပါသည်။"
     )
 
-# --- Group ထဲသို့ လူအသစ်ဖိတ်ခေါ်မှု စစ်ဆေးခြင်း ---
+# Group ထဲသို့ လူအသစ်ဖိတ်ခေါ်မှု စစ်ဆေးခြင်း
 @dp.message(F.new_chat_members)
 async def new_member_handler(message: types.Message):
     inviter = message.from_user
@@ -89,11 +98,12 @@ async def new_member_handler(message: types.Message):
         await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
         await db.record_invitation(inviter.id, new_member.id)
 
-# --- Topic ထဲတွင် Menu ခေါ်ယူခြင်း ---
+# Lucky Spin Topic ထဲတွင် Menu ဖွင့်ခြင်း
 @dp.message(Command("spin"))
 async def open_spin_menu(message: types.Message):
-    if message.message_thread_id != SPIN_TOPIC_ID:
-        return  # သတ်မှတ်ထားသော Topic တွင်သာ ခွင့်ပြုမည်
+    # သတ်မှတ်ထားသော Topic ID မဟုတ်ပါက အလုပ်မလုပ်ပါ
+    if SPIN_TOPIC_ID != 0 and message.message_thread_id != SPIN_TOPIC_ID:
+        return
     
     user = await db.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     kb = get_spin_keyboard(message.from_user.id, message.from_user.first_name)
@@ -112,10 +122,12 @@ async def open_spin_menu(message: types.Message):
     except Exception:
         pass
 
-# --- Callback Handler (မဲနှိပ်ခြင်း / အခြားသူ တားမြစ်ခြင်း / Cooldown) ---
+# မဲလှည့်ခြင်း Callback
 @dp.callback_query(lambda c: c.data.startswith("spin_"))
 async def handle_spin(callback: types.CallbackQuery):
     orig_user_id = int(callback.data.split("_")[1])
+    
+    # သူစိမ်း ဝင်နှိပ်ခြင်း တားမြစ်ခြင်း
     if callback.from_user.id != orig_user_id:
         await callback.answer("⚠️ ဤခလုတ်သည် သင့်အတွက် မဟုတ်ပါ။ /spin ဖြင့် ကိုယ်တိုင် စတင်ပါ!", show_alert=True)
         return
@@ -131,7 +143,7 @@ async def handle_spin(callback: types.CallbackQuery):
     user_cooldowns[orig_user_id] = current_time
     await callback.answer()
 
-    # Spin ရလဒ် ထုတ်ယူခြင်း
+    # Database မှ မဲရလဒ် တွက်ထုတ်ခြင်း
     result, data = await db.spin_wheel(orig_user_id)
     if result == "NO_TOKEN":
         await callback.message.edit_text("❌ သင့်တွင် Token မရှိတော့ပါ။ လူထပ်မံ ဖိတ်ခေါ်ပါ!")
@@ -155,7 +167,7 @@ async def handle_spin(callback: types.CallbackQuery):
     except Exception:
         pass
 
-# --- Link ခလုတ် နှိပ်သည့်အခါ ---
+# Link ခလုတ် နှိပ်သည့်အခါ
 @dp.callback_query(lambda c: c.data.startswith("link_"))
 async def handle_link(callback: types.CallbackQuery):
     orig_user_id = int(callback.data.split("_")[1])
@@ -166,7 +178,7 @@ async def handle_link(callback: types.CallbackQuery):
     link = f"https://t.me/{me.username}?start=ref_{orig_user_id}"
     await callback.answer(f"သင့် Link: {link}", show_alert=True)
 
-# --- ဖုန်းဘေလ် လဲလှယ်တောင်းဆိုခြင်း ---
+# ဖုန်းဘေလ် လဲလှယ်တောင်းဆိုခြင်း
 @dp.callback_query(lambda c: c.data.startswith("redeem_"))
 async def handle_redeem_btn(callback: types.CallbackQuery):
     orig_user_id = int(callback.data.split("_")[1])
@@ -182,7 +194,9 @@ async def handle_redeem_btn(callback: types.CallbackQuery):
     me = await bot.get_me()
     await callback.answer(url=f"https://t.me/{me.username}?start=redeem")
 
-# --- Private Chat တွင် အော်ပရေတာနှင့် ဖုန်းနံပါတ် တောင်းယူခြင်း ---
+# ==========================================================
+# 📱 Private Chat Redeem Process (Privacy ထိန်းသိမ်းခြင်း)
+# ==========================================================
 @dp.message(Command("start"), F.text == "/start redeem")
 async def start_redeem_private(message: types.Message, state: FSMContext):
     user = await db.get_or_create_user(message.from_user.id, "", "")
@@ -210,25 +224,27 @@ async def submit_phone(message: types.Message, state: FSMContext):
     data = await state.get_data()
     operator = data.get("operator")
 
-    # Coin ၁၀၀၀ နုတ်ယူခြင်း
+    # Coin ၁,၀၀၀ နုတ်ယူခြင်း
     await db.add_coins(message.from_user.id, -1000)
 
-    # သီးသန့် Admin Group သို့သာ လျှို့ဝှက် ပေးပို့ခြင်း
-    admin_log = (
-        f"🔔 **[ဖုန်းဘေလ် လဲလှယ်မှု အော်ဒါအသစ်]**\n\n"
-        f"👤 အကောင့်: @{message.from_user.username or message.from_user.first_name} (`{message.from_user.id}`)\n"
-        f"📱 အော်ပရေတာ: **{operator}**\n"
-        f"📞 ဖုန်းနံပါတ်: `{phone}`\n"
-        f"🪙 ကုန်ကျစရိတ်: 1,000 Coins (ဖြတ်ပြီး)\n"
-        f"📅 အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-    )
-    await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log)
+    # ဖုန်းနံပါတ် အချက်အလက်ကို သီးသန့် Admin Group သို့သာ ပို့ခြင်း
+    if ADMIN_LOG_GROUP_ID != 0:
+        admin_log = (
+            f"🔔 **[ဖုန်းဘေလ် လဲလှယ်မှု အော်ဒါအသစ်]**\n\n"
+            f"👤 အကောင့်: @{message.from_user.username or message.from_user.first_name} (`{message.from_user.id}`)\n"
+            f"📱 အော်ပရေတာ: **{operator}**\n"
+            f"📞 ဖုန်းနံပါတ်: `{phone}`\n"
+            f"🪙 ကုန်ကျစရိတ်: 1,000 Coins (ဖြတ်ပြီး)\n"
+            f"📅 အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log)
+
     await message.reply("✅ တောင်းဆိုမှု အောင်မြင်ပါသည်။ Admin မှ စစ်ဆေး၍ ဖုန်းဘေလ် ဖြည့်ပေးပါလိမ့်မည်။")
     await state.clear()
 
-# ==========================================
+# ==========================================================
 # 👑 Owner သီးသန့် Admin Commands
-# ==========================================
+# ==========================================================
 @dp.message(Command("give"))
 async def cmd_give(message: types.Message):
     if message.from_user.id != OWNER_ID or not message.reply_to_message:
@@ -237,7 +253,7 @@ async def cmd_give(message: types.Message):
     if len(args) > 1 and args[1].isdigit():
         target = message.reply_to_message.from_user
         new_c = await db.add_coins(target.id, int(args[1]))
-        await message.reply(f"🎁 {target.first_name} အား **+{args[1]} Coins** မုန့်ဖိုးပေးလိုက်ပါပြီ! (လက်ရှိ: {new_c})")
+        await message.reply(f"🎁 {target.first_name} အား **+{args[1]} Coins** မုန့်ဖိုးပေးလိုက်ပါပြီ! (လက်ရှိစုစုပေါင်း: {new_c} Coins)")
 
 @dp.message(Command("givetoken"))
 async def cmd_givetoken(message: types.Message):
@@ -247,7 +263,7 @@ async def cmd_givetoken(message: types.Message):
     if len(args) > 1 and args[1].isdigit():
         target = message.reply_to_message.from_user
         new_t = await db.add_tokens(target.id, int(args[1]))
-        await message.reply(f"🎟️ {target.first_name} အား **+{args[1]} Token** လက်ဆောင်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_t})")
+        await message.reply(f"🎟️ {target.first_name} အား **+{args[1]} Token** မဲလှည့်ခွင့် ပေးလိုက်ပါပြီ! (လက်ရှိစုစုပေါင်း: {new_t} ခု)")
 
 @dp.message(Command("top15"))
 async def cmd_top15(message: types.Message):
@@ -292,12 +308,14 @@ async def cmd_check(message: types.Message):
         f"🎰 ယနေ့မဲလှည့်ပြီး: **{u[6]}/10 ကြိမ်**"
     )
 
-# --- Bot စတင် Run ခြင်း Main Loop ---
+# ==========================================================
+# 🚀 Run Application
+# ==========================================================
 async def main():
     await db.init_db()
     asyncio.create_task(start_web_server())
     asyncio.create_task(auto_backup_task())
-    print("Bot is started...")
+    print("Bot is successfully running...")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
