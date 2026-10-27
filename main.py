@@ -12,6 +12,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import database as db
 
+# ==========================================================
+# ⚙️ Render Environment Variables မှ လျှို့ဝှက်တန်ဖိုးများ ဆွဲယူခြင်း
+# ==========================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 SPIN_GROUP_ID = int(os.environ.get("SPIN_GROUP_ID", 0))      # Main Group ID
@@ -25,12 +28,15 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 user_cooldowns = {}
 user_active_menu = {}
-BOT_USERNAME = ""  # startup တွင် ဖြည့်ပါမည်
+BOT_USERNAME = ""
 
 class RedeemState(StatesGroup):
     waiting_for_operator = State()
     waiting_for_phone = State()
 
+# ==========================================================
+# 🌐 UptimeRobot အတွက် Health Check Web Server
+# ==========================================================
 async def health_check(request):
     return web.Response(text="Bot is running active!")
 
@@ -43,6 +49,9 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
+# ==========================================================
+# 📦 Daily Database Auto-Backup
+# ==========================================================
 async def auto_backup_task():
     while True:
         await asyncio.sleep(86400)
@@ -58,7 +67,9 @@ async def auto_backup_task():
         except Exception as e:
             print(f"Backup Error: {e}")
 
-# --- Contact Add Member Detection ---
+# ==========================================================
+# 👥 Contact မှတစ်ဆင့် Add Member စစ်ဆေးခြင်း
+# ==========================================================
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(LEFT | KICKED | RESTRICTED) >> (MEMBER | ADMINISTRATOR | CREATOR)))
 async def on_user_join(event: ChatMemberUpdated):
     if SPIN_GROUP_ID != 0 and event.chat.id != SPIN_GROUP_ID:
@@ -85,7 +96,9 @@ async def new_member_message_handler(message: types.Message):
             await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
             await db.record_invitation(inviter.id, new_member.id)
 
-# --- Spin Menu Keyboard (ဖုန်းဘေလ်လဲရန် Direct URL Button ထည့်သွင်းခြင်း) ---
+# ==========================================================
+# 🎮 Lucky Spin Menu
+# ==========================================================
 def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
     redeem_url = f"https://t.me/{BOT_USERNAME}?start=bill"
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -93,13 +106,6 @@ def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="ဖုန်းဘေလ်တောင်းဆိုထားသောစာရင်း", callback_data=f"pending_{user_id}")],
         [InlineKeyboardButton(text="ဖုန်းဘေလ် လဲလှည်မည်", url=redeem_url)]
     ])
-
-async def unpin_after_one_day(chat_id: int, message_id: int):
-    await asyncio.sleep(86400)
-    try:
-        await bot.unpin_chat_message(chat_id=chat_id, message_id=message_id)
-    except Exception:
-        pass
 
 @dp.message(Command("spin"))
 async def open_spin_menu(message: types.Message):
@@ -135,23 +141,28 @@ async def open_spin_menu(message: types.Message):
     except Exception:
         pass
 
-# --- မဲလှည့်ခြင်း Callback ---
+# ==========================================================
+# 🎰 မဲလှည့်ခြင်း Callback
+# ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("spin_"))
 async def handle_spin(callback: types.CallbackQuery):
     orig_user_id = int(callback.data.split("_")[1])
+    is_owner = (orig_user_id == OWNER_ID)
     
     if callback.from_user.id != orig_user_id:
         await callback.answer("ဤခလုတ်သည် သင့်အတွက် မဟုတ်ပါ။ /spin ဖြင့် ကိုယ်တိုင် စတင်ပါ!", show_alert=True)
         return
 
-    current_time = time.time()
-    last_time = user_cooldowns.get(orig_user_id, 0)
-    if current_time - last_time < 7:
-        rem = int(7 - (current_time - last_time))
-        await callback.answer(f"ခဏစောင့်ပါဦး ({rem} စက္ကန့် ကျန်ပါသည်)", show_alert=True)
-        return
+    # Owner မဟုတ်မှသာ Cooldown ၇ စက္ကန့် စစ်မည်
+    if not is_owner:
+        current_time = time.time()
+        last_time = user_cooldowns.get(orig_user_id, 0)
+        if current_time - last_time < 7:
+            rem = int(7 - (current_time - last_time))
+            await callback.answer(f"ခဏစောင့်ပါဦး ({rem} စက္ကန့် ကျန်ပါသည်)", show_alert=True)
+            return
+        user_cooldowns[orig_user_id] = current_time
 
-    user_cooldowns[orig_user_id] = current_time
     await callback.answer()
 
     chat_id = callback.message.chat.id
@@ -176,7 +187,8 @@ async def handle_spin(callback: types.CallbackQuery):
     except Exception:
         pass
 
-    result, data = await db.spin_wheel(orig_user_id)
+    # Database မှ မဲရလဒ် တွက်ထုတ်ခြင်း (Owner စစ်ဆေးမှု ပါဝင်သည်)
+    result, data = await db.spin_wheel(orig_user_id, is_owner=is_owner)
 
     if result == "NO_TOKEN":
         msg = await bot.send_message(
@@ -204,10 +216,7 @@ async def handle_spin(callback: types.CallbackQuery):
             pass
         return
 
-    # မဲပေါက်စာသား သတ်မှတ်ခြင်း (၁,၀၀၀ ကျပ် ပေါက်ပါက အထူးစာတန်း)
-    if result == 1000:
-        prize_text = "💥💥 အမြင့်ဆုံးဆုကြီး ၁,၀၀၀ ကျပ် ကံထူးသွားပါပြီ! 💥💥"
-    elif result > 0:
+    if result > 0:
         prize_text = f"သင် {result} Bill ကံထူးသွားပါပြီ!"
     else:
         prize_text = "ယခုအကြိမ်တွင် ကံစမ်းမဲ မပေါက်ပါ ။"
@@ -219,6 +228,7 @@ async def handle_spin(callback: types.CallbackQuery):
         f"Spin လှည့်ခွင့် - {data[1]} ကြိမ်"
     )
 
+    # Token ကျန်သေးပါက ဆက်လှည့်နိုင်မည့် ခလုတ် ပြသပေးခြင်း
     spin_again_kb = None
     if data[1] > 0:
         spin_again_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -232,25 +242,15 @@ async def handle_spin(callback: types.CallbackQuery):
         reply_markup=spin_again_kb
     )
 
-    # ၁,၀၀၀ ကျပ် ပေါက်ပါက သီးသန့် အသိပေးကြေငြာချက် ပို့ပြီး ၁ ရက် Pin ထိုးပေးခြင်း
-    if result == 1000:
-        announce_msg = await bot.send_message(
+    # 📢 မဲပေါက်ပါက Topic ထဲ ကြေငြာချက် သီးသန့်ပို့ပေးခြင်း (Pin မထိုးပါ၊ ပြန်မဖျက်ပါ)
+    if result > 0:
+        await bot.send_message(
             chat_id=chat_id,
             message_thread_id=thread_id,
-            text=(
-                f"🎉🎉 **[အမြင့်ဆုံးဆု ကံထူးရှင် ထွက်ပေါ်လာပါပြီ!]** 🎉🎉\n\n"
-                f"👤 ကံထူးရှင်: {callback.from_user.first_name}\n"
-                f"🎁 ဆုပမာဏ: **၁,၀၀၀ ကျပ် ဖုန်းဘေလ်** 💥\n\n"
-                f"ဂုဏ်ယူပါသည်! ချက်ချင်း ဖုန်းဘေလ် လဲလှယ်နိုင်ပါပြီ။"
-            )
+            text=f"🎉 ဂုဏ်ယူပါတယ်! {callback.from_user.first_name} သည် **{result} Bill** ကံထူးသွားပါသည်!"
         )
-        try:
-            await bot.pin_chat_message(chat_id=chat_id, message_id=announce_msg.message_id, disable_notification=False)
-            asyncio.create_task(unpin_after_one_day(chat_id, announce_msg.message_id))
-        except Exception as e:
-            print(f"Pin Error: {e}")
 
-    # မဲမပေါက်ပါက ၁၅ စက္ကန့်အကြာတွင် ဖျက်မည် (ပေါက်ပါက Group ထဲတွင် အမြဲချန်ထားမည်)
+    # မဲမပေါက်ပါက အမှိုက်မရှုပ်စေရန် ရလဒ်စာကို ၁၅ စက္ကန့်အကြာတွင် ဖျက်ပေးခြင်း
     if result == 0:
         await asyncio.sleep(15)
         try:
@@ -331,7 +331,9 @@ async def submit_phone(message: types.Message, state: FSMContext):
     await message.reply("တောင်းဆိုမှု အောင်မြင်ပါသည်။ Admin မှ စစ်ဆေး၍ ဖုန်းဘေလ် ဖြည့်ပေးပါလိမ့်မည်။")
     await state.clear()
 
-# --- Owner Approve Button ---
+# ==========================================================
+# 👑 Owner Approve Button (ဖြည့်ပြီးပါက Topic ထဲ ကြေငြာမည်၊ Pin မထိုးပါ၊ ပြန်မဖျက်ပါ)
+# ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("approve_"))
 async def handle_approve_btn(callback: types.CallbackQuery):
     if int(callback.from_user.id) != OWNER_ID:
@@ -349,6 +351,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     user_info = await db.get_or_create_user(uid, "", "")
     user_name = user_info[2] or "User"
 
+    # ၁။ Admin Log Group ထဲရှိ စာသားကို ပြီးစီးကြောင်း ပြောင်းလဲခြင်း
     updated_text = (
         f"✅ [ဘေလ်ဖြည့်ပြီးပါပြီ]\n\n"
         f"အကောင့်: {user_name} (`{uid}`)\n"
@@ -360,6 +363,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     await callback.message.edit_text(updated_text)
     await callback.answer("ဘေလ်ဖြည့်ပြီးကြောင်း မှတ်တမ်းတင်ပြီးပါပြီ။")
 
+    # ၂။ Main Group ၏ Lucky Spin Topic ထဲသို့ ကြေငြာချက်ပို့ပေးခြင်း (Pin မထိုးပါ၊ ပြန်မဖျက်ပါ)
     if SPIN_GROUP_ID != 0 and SPIN_TOPIC_ID != 0:
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! {user_name} သို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ!"
         try:
@@ -371,6 +375,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         except Exception as e:
             print(f"Announcement Error: {e}")
 
+    # ၃။ User ထံသို့လည်း Private DM အသိပေးစာ ပို့ပေးခြင်း
     try:
         await bot.send_message(
             chat_id=uid,
@@ -382,30 +387,24 @@ async def handle_approve_btn(callback: types.CallbackQuery):
 # ==========================================================
 # 👑 Owner Commands (/top10, /detail, /backup, /restore, /givebill, /givetoken)
 # ==========================================================
-
-# 🏆 /top10 — ထိပ်သီး ၁၀ ဦး စာရင်း
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
         return
-    
     rows = await db.get_top_10()
     if not rows:
         await message.reply("မှတ်တမ်းမရှိသေးပါ။")
         return
-
     text = "🏆 **Top 10 အများဆုံး စာရင်း**\n\n"
     for i, (fn, un, c, t) in enumerate(rows, 1):
         u_str = f"@{un}" if un else fn
         text += f"{i}. {u_str} — **{c} ကျပ်** (Spin: {t} ကြိမ်)\n"
     await message.reply(text)
 
-# 🔍 /detail — User အချက်အလက် စစ်ဆေးခြင်း
 @dp.message(Command("detail"))
 async def cmd_detail(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
         return
-
     target_id = None
     if message.reply_to_message:
         target_id = message.reply_to_message.from_user.id
@@ -438,7 +437,6 @@ async def cmd_detail(message: types.Message):
         f"🎰 ယနေ့မဲလှည့်ပြီး: **{u[6]}/10 ကြိမ်**"
     )
 
-# 📦 /backup
 @dp.message(Command("backup"))
 async def cmd_manual_backup(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -462,7 +460,6 @@ async def cmd_manual_backup(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ Backup Error: {e}")
 
-# 🔄 /restore
 @dp.message(Command("restore"))
 async def cmd_restore(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -484,7 +481,6 @@ async def cmd_restore(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
-# /givebill
 @dp.message(Command("givebill"))
 async def cmd_givebill(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -515,7 +511,6 @@ async def cmd_givebill(message: types.Message):
     new_c = await db.add_coins(target_id, amount)
     await message.reply(f"🎁 {target_name} (`{target_id}`) သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_c} ကျပ်)")
 
-# /givetoken
 @dp.message(Command("givetoken"))
 async def cmd_givetoken(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
