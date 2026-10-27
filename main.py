@@ -107,6 +107,16 @@ def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="ဖုန်းဘေလ် လဲလှည်မည်", url=redeem_url)]
     ])
 
+# ⏳ မသုံးဘဲ ပစ်ထားသော Menu ကို အလိုအလျောက် ပြန်ဖျက်ပေးသည့် Background Task
+async def auto_delete_idle_menu(chat_id: int, message_id: int, user_id: int, delay: int = 30):
+    await asyncio.sleep(delay)
+    if user_active_menu.get(user_id) == message_id:
+        try:
+            await bot.delete_message(chat_id=chat_id, message_id=message_id)
+        except Exception:
+            pass
+        user_active_menu.pop(user_id, None)
+
 @dp.message(Command("spin"))
 async def open_spin_menu(message: types.Message):
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
@@ -115,6 +125,14 @@ async def open_spin_menu(message: types.Message):
         return
     
     uid = message.from_user.id
+    
+    # Topic မရှုပ်စေရန် User ရိုက်သော /spin command စာကို ချက်ချင်း ဖျက်ပေးခြင်း
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    # ယခင်က ဖွင့်ထားပြီး မဖျက်ရသေးသော Menu အဟောင်းရှိပါက အရင်ဖျက်ပေးခြင်း
     if uid in user_active_menu:
         old_msg_id = user_active_menu[uid]
         try:
@@ -130,16 +148,17 @@ async def open_spin_menu(message: types.Message):
         f"Bill လက်ကျန် - {user[3]} ကျပ်\n"
         f"Spin လှည့်ခွင့် - {user[4]} ကြိမ်"
     )
-    sent_msg = await message.reply(menu_text, reply_markup=kb)
+    
+    sent_msg = await bot.send_message(
+        chat_id=message.chat.id,
+        message_thread_id=message.message_thread_id,
+        text=menu_text,
+        reply_markup=kb
+    )
     user_active_menu[uid] = sent_msg.message_id
 
-    await asyncio.sleep(120)
-    try:
-        if user_active_menu.get(uid) == sent_msg.message_id:
-            await sent_msg.delete()
-            del user_active_menu[uid]
-    except Exception:
-        pass
+    # ၃၀ စက္ကန့်အတွင်း ခလုတ်မနှိပ်ပါက အလိုအလျောက် ပြန်ဖျက်မည့် Task စတင်ခြင်း
+    asyncio.create_task(auto_delete_idle_menu(message.chat.id, sent_msg.message_id, uid, delay=30))
 
 # ==========================================================
 # 🎰 မဲလှည့်ခြင်း Callback
@@ -187,7 +206,7 @@ async def handle_spin(callback: types.CallbackQuery):
     except Exception:
         pass
 
-    # Database မှ မဲရလဒ် တွက်ထုတ်ခြင်း (Owner စစ်ဆေးမှု ပါဝင်သည်)
+    # Database မှ မဲရလဒ် တွက်ထုတ်ခြင်း
     result, data = await db.spin_wheel(orig_user_id, is_owner=is_owner)
 
     if result == "NO_TOKEN":
@@ -228,7 +247,6 @@ async def handle_spin(callback: types.CallbackQuery):
         f"Spin လှည့်ခွင့် - {data[1]} ကြိမ်"
     )
 
-    # Token ကျန်သေးပါက ဆက်လှည့်နိုင်မည့် ခလုတ် ပြသပေးခြင်း
     spin_again_kb = None
     if data[1] > 0:
         spin_again_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -242,7 +260,7 @@ async def handle_spin(callback: types.CallbackQuery):
         reply_markup=spin_again_kb
     )
 
-    # 📢 မဲပေါက်ပါက Topic ထဲ ကြေငြာချက် သီးသန့်ပို့ပေးခြင်း (Pin မထိုးပါ၊ ပြန်မဖျက်ပါ)
+    # 📢 မဲပေါက်ပါက အောက်တွင် Topic ကြေငြာချက် သီးသန့်ပို့ပေးခြင်း (အမြဲတမ်း ချန်ထားမည်၊ Pin မထိုးပါ)
     if result > 0:
         await bot.send_message(
             chat_id=chat_id,
@@ -250,13 +268,12 @@ async def handle_spin(callback: types.CallbackQuery):
             text=f"🎉 ဂုဏ်ယူပါတယ်! {callback.from_user.first_name} သည် **{result} Bill** ကံထူးသွားပါသည်!"
         )
 
-    # မဲမပေါက်ပါက အမှိုက်မရှုပ်စေရန် ရလဒ်စာကို ၁၅ စက္ကန့်အကြာတွင် ဖျက်ပေးခြင်း
-    if result == 0:
-        await asyncio.sleep(15)
-        try:
-            await sent_result.delete()
-        except Exception:
-            pass
+    # ⏳ အပေါ်က ကိုယ်ပိုင် အချက်အလက်စာကို ၁၅ စက္ကန့်အကြာတွင် အလိုအလျောက် ပြန်ဖျက်ပေးခြင်း
+    await asyncio.sleep(15)
+    try:
+        await sent_result.delete()
+    except Exception:
+        pass
 
 # --- Pending စာရင်း ကြည့်ရှုသည့် Callback ---
 @dp.callback_query(lambda c: c.data.startswith("pending_"))
