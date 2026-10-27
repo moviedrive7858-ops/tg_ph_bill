@@ -100,7 +100,7 @@ async def new_member_message_handler(message: types.Message):
             await db.record_invitation(inviter.id, new_member.id)
 
 # ==========================================================
-# 🎮 Lucky Spin Menu (စာသားများနှင့် ခလုတ်များ အသစ်)
+# 🎮 Lucky Spin Menu
 # ==========================================================
 def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -109,9 +109,8 @@ def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="ဖုန်းဘေလ် လဲလှည်မည်", callback_data=f"redeem_{user_id}")]
     ])
 
-# ၁ ရက်ကြာလျှင် Pin ဖြုတ်ပေးမည့် Task
 async def unpin_after_one_day(chat_id: int, message_id: int):
-    await asyncio.sleep(86400)  # ၂၄ နာရီတိတိ
+    await asyncio.sleep(86400)
     try:
         await bot.unpin_chat_message(chat_id=chat_id, message_id=message_id)
     except Exception:
@@ -127,7 +126,6 @@ async def open_spin_menu(message: types.Message):
     
     uid = message.from_user.id
 
-    # User က /spin ထပ်ခေါ်ပါက အဟောင်းကို ချက်ချင်း ဖျက်ပေးခြင်း
     if uid in user_active_menu:
         old_msg_id = user_active_menu[uid]
         try:
@@ -146,7 +144,6 @@ async def open_spin_menu(message: types.Message):
     sent_msg = await message.reply(menu_text, reply_markup=kb)
     user_active_menu[uid] = sent_msg.message_id
 
-    # ၂ မိနစ်ကြာလျှင် Auto-clean ပြုလုပ်ခြင်း
     await asyncio.sleep(120)
     try:
         if user_active_menu.get(uid) == sent_msg.message_id:
@@ -155,7 +152,9 @@ async def open_spin_menu(message: types.Message):
     except Exception:
         pass
 
-# မဲလှည့်ခြင်း Callback
+# ==========================================================
+# 🎰 မဲလှည့်ခြင်း Callback (Cooldown ချိန်ညှိမှုနှင့် Delay ထည့်သွင်းခြင်း)
+# ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("spin_"))
 async def handle_spin(callback: types.CallbackQuery):
     orig_user_id = int(callback.data.split("_")[1])
@@ -164,30 +163,49 @@ async def handle_spin(callback: types.CallbackQuery):
         await callback.answer("ဤခလုတ်သည် သင့်အတွက် မဟုတ်ပါ။ /spin ဖြင့် ကိုယ်တိုင် စတင်ပါ!", show_alert=True)
         return
 
+    # Cooldown ကို ၇ စက္ကန့် သတ်မှတ်ထားသည်
     current_time = time.time()
     last_time = user_cooldowns.get(orig_user_id, 0)
-    if current_time - last_time < 5:
-        rem = int(5 - (current_time - last_time))
+    if current_time - last_time < 7:
+        rem = int(7 - (current_time - last_time))
         await callback.answer(f"ခဏစောင့်ပါဦး ({rem} စက္ကန့် ကျန်ပါသည်)", show_alert=True)
         return
 
     user_cooldowns[orig_user_id] = current_time
     await callback.answer()
 
-    # ခလုတ်နှိပ်လိုက်သည်နှင့် မူလ Menu စာတိုကို ချက်ချင်း ဖျက်ပစ်ခြင်း
+    chat_id = callback.message.chat.id
+    thread_id = callback.message.message_thread_id
+
+    # ၁။ မဲလှည့်သည့် Menu အဟောင်းကို ချက်ချင်း ဖျက်ပစ်ခြင်း
     try:
         await callback.message.delete()
     except Exception:
         pass
     user_active_menu.pop(orig_user_id, None)
 
-    # မဲလှည့်ခြင်း Logic
+    # ၂။ မဲလှည့်နေကြောင်း ခဏ အသိပေးစာ ပို့ထားခြင်း
+    temp_msg = await bot.send_message(
+        chat_id=chat_id,
+        message_thread_id=thread_id,
+        text=f"🎰 {callback.from_user.first_name} ကံစမ်းမဲ လှည့်နေပါသည်..."
+    )
+
+    # ၃။ Cooldown ကို မသိသာစေရန် ၂.၅ စက္ကန့် Delay ခေတ္တစောင့်ဆိုင်းခြင်း
+    await asyncio.sleep(2.5)
+
+    # ၄။ မဲလှည့်သည့် စာတိုကို ဖျက်ခြင်း
+    try:
+        await temp_msg.delete()
+    except Exception:
+        pass
+
+    # ၅။ Database မှ မဲရလဒ် တွက်ထုတ်ခြင်း
     result, data = await db.spin_wheel(orig_user_id)
-    thread_id = callback.message.message_thread_id
 
     if result == "NO_TOKEN":
         msg = await bot.send_message(
-            chat_id=callback.message.chat.id,
+            chat_id=chat_id,
             message_thread_id=thread_id,
             text=f"{callback.from_user.first_name}\nSpin လှည့်ခွင့် မရှိတော့ပါ။ Group ထဲသို့ Contact မှ သူငယ်ချင်းများကို Add ပေးပါ။"
         )
@@ -200,7 +218,7 @@ async def handle_spin(callback: types.CallbackQuery):
 
     if result == "LIMIT_REACHED":
         msg = await bot.send_message(
-            chat_id=callback.message.chat.id,
+            chat_id=chat_id,
             message_thread_id=thread_id,
             text=f"{callback.from_user.first_name}\nယနေ့အတွက် မဲလှည့်ခွင့် ၁၀ ကြိမ် ပြည့်သွားပါပြီ။ မနက်ဖြန်မှ ထပ်မံကြိုးစားပါ။"
         )
@@ -224,7 +242,7 @@ async def handle_spin(callback: types.CallbackQuery):
         f"Spin လှည့်ခွင့် - {data[1]} ကြိမ်"
     )
 
-    # Spin လှည့်ခွင့် ကျန်ရှိပါက ဆက်လှည့်နိုင်သော ခလုတ် ထည့်သွင်းပေးခြင်း
+    # Spin ကျန်သေးပါက ဆက်လှည့်နိုင်မည့် ခလုတ် ပြသပေးခြင်း
     spin_again_kb = None
     if data[1] > 0:
         spin_again_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -232,26 +250,25 @@ async def handle_spin(callback: types.CallbackQuery):
         ])
 
     sent_result = await bot.send_message(
-        chat_id=callback.message.chat.id,
+        chat_id=chat_id,
         message_thread_id=thread_id,
         text=result_display,
         reply_markup=spin_again_kb
     )
 
-    # အထူးဂုဏ်ပြုချက် - 1,000 ကျပ် ကံထူးပါက ၁ ရက်တိတိ Pin ထိုးပေးခြင်း
+    # ၁,၀၀၀ ကျပ် ကံထူးပါက ၁ ရက်တိတိ Pin ထိုးပေးခြင်း
     if result == 1000:
         try:
             await bot.pin_chat_message(
-                chat_id=callback.message.chat.id,
+                chat_id=chat_id,
                 message_id=sent_result.message_id,
                 disable_notification=False
             )
-            # ၁ ရက် (86,400 စက္ကန့်) ကြာလျှင် အလိုအလျောက် Unpin ပြန်လုပ်မည့် Task
-            asyncio.create_task(unpin_after_one_day(callback.message.chat.id, sent_result.message_id))
+            asyncio.create_task(unpin_after_one_day(chat_id, sent_result.message_id))
         except Exception as e:
             print(f"Pin Error: {e}")
 
-    # မဲမပေါက်ပါက ၁၅ စက္ကန့်အကြာတွင် ဖျက်မည် (မဲပေါက်ပါက လူတိုင်းမြင်နိုင်ရန် မဖျက်ဘဲ အမြဲချန်ထားမည်)
+    # မဲမပေါက်ပါက ၁၅ စက္ကန့်အကြာတွင် ဖျက်မည် (ဆုမဲပေါက်ပါက လူတိုင်းမြင်တွေ့နိုင်ရန် မဖျက်ဘဲ အမြဲချန်ထားမည်)
     if result == 0:
         await asyncio.sleep(15)
         try:
@@ -259,7 +276,9 @@ async def handle_spin(callback: types.CallbackQuery):
         except Exception:
             pass
 
-# Pending စာရင်း ကြည့်ရှုသည့် Callback (နှိပ်လျှင် Menu ဖျက်မည်)
+# ==========================================================
+# 📋 Pending စာရင်း ကြည့်ရှုသည့် Callback (စာမပျောက်စေရန် Alert ဖြင့်သာ ပြသခြင်း)
+# ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("pending_"))
 async def handle_pending_btn(callback: types.CallbackQuery):
     orig_user_id = int(callback.data.split("_")[1])
@@ -267,16 +286,10 @@ async def handle_pending_btn(callback: types.CallbackQuery):
         await callback.answer("သင့်အတွက် မဟုတ်ပါ!", show_alert=True)
         return
 
-    # Menu ဖျက်ပေးခြင်း
-    try:
-        await callback.message.delete()
-    except Exception:
-        pass
-    user_active_menu.pop(orig_user_id, None)
-
     pending_list = await db.get_user_pending_redemptions(orig_user_id)
     if not pending_list:
-        await callback.answer("လွှဲရန်ကျန်ရှိသော ဖုန်းဘေလ်တောင်းဆိုမှု မရှိပါ။", show_alert=True)
+        # စာရင်းမရှိပါက Alert အနေဖြင့် မျက်နှာပြင်ပေါ်တွင် ရှင်းလင်းစွာ ပြပေးမည် (Menu စာ မပျက်ပါ)
+        await callback.answer("လွှဲရန်ကျန်ရှိသော ဖုန်းဘေလ်တောင်းဆိုမှု မရှိသေးပါ။", show_alert=True)
         return
 
     text = "⏳ ဖုန်းဘေလ်တောင်းဆိုထားသောစာရင်း:\n\n"
@@ -285,7 +298,9 @@ async def handle_pending_btn(callback: types.CallbackQuery):
     
     await callback.answer(text, show_alert=True)
 
-# ဖုန်းဘေလ် လဲလှယ်တောင်းဆိုခြင်း ခလုတ် (နှိပ်လျှင် Menu ဖျက်မည်)
+# ==========================================================
+# 🎁 ဖုန်းဘေလ် လဲလှယ်တောင်းဆိုခြင်း ခလုတ်
+# ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("redeem_"))
 async def handle_redeem_btn(callback: types.CallbackQuery):
     orig_user_id = int(callback.data.split("_")[1])
@@ -295,10 +310,11 @@ async def handle_redeem_btn(callback: types.CallbackQuery):
 
     user = await db.get_or_create_user(orig_user_id, "", "")
     if user[3] < 1000:
+        # 1,000 Bill မပြည့်ပါက Alert ပြပြီး Menu စာကို ဆက်ထားမည်
         await callback.answer(f"အနည်းဆုံး 1,000 Bill ရှိမှသာ ဖုန်းဘေလ် လဲနိုင်ပါသည်! (လက်ရှိ: {user[3]} ကျပ်)", show_alert=True)
         return
 
-    # Menu ဖျက်ပေးခြင်း
+    # Bill ပြည့်ပါက Menu ကို ဖျက်ပြီး Private Bot Chat သို့ ချက်ချင်း လမ်းညွှန်မည်
     try:
         await callback.message.delete()
     except Exception:
@@ -397,7 +413,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     await callback.message.edit_text(updated_text)
     await callback.answer("ဘေလ်ဖြည့်ပြီးကြောင်း မှတ်တမ်းတင်ပြီးပါပြီ။")
 
-    # ၂။ Main Group ၏ Lucky Spin Topic ထဲသို့ ဂုဏ်ပြုကြေငြာချက် အလိုအလျောက် ပို့ပေးခြင်း
+    # ၂။ Main Group ၏ Lucky Spin Topic ထဲသို့ ဂုဏ်ပြုကြေငြာချက် ပို့ပေးခြင်း
     if SPIN_GROUP_ID != 0 and SPIN_TOPIC_ID != 0:
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! {user_name} သို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ!"
         try:
