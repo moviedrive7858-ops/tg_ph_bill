@@ -163,7 +163,6 @@ async def handle_spin(callback: types.CallbackQuery):
         await callback.answer("ဤခလုတ်သည် သင့်အတွက် မဟုတ်ပါ။ /spin ဖြင့် ကိုယ်တိုင် စတင်ပါ!", show_alert=True)
         return
 
-    # Cooldown ကို ၇ စက္ကန့် သတ်မှတ်ထားသည်
     current_time = time.time()
     last_time = user_cooldowns.get(orig_user_id, 0)
     if current_time - last_time < 7:
@@ -191,16 +190,15 @@ async def handle_spin(callback: types.CallbackQuery):
         text=f"🎰 {callback.from_user.first_name} ကံစမ်းမဲ လှည့်နေပါသည်..."
     )
 
-    # ၃။ Cooldown ကို မသိသာစေရန် ၂.၅ စက္ကန့် Delay ခေတ္တစောင့်ဆိုင်းခြင်း
+    # ၃။ Cooldown ကို မသိသာစေရန် ၂.၅ စက္ကန့် Delay စောင့်ဆိုင်းခြင်း
     await asyncio.sleep(2.5)
 
-    # ၄။ မဲလှည့်သည့် စာတိုကို ဖျက်ခြင်း
     try:
         await temp_msg.delete()
     except Exception:
         pass
 
-    # ၅။ Database မှ မဲရလဒ် တွက်ထုတ်ခြင်း
+    # ၄။ Database မှ မဲရလဒ် တွက်ထုတ်ခြင်း
     result, data = await db.spin_wheel(orig_user_id)
 
     if result == "NO_TOKEN":
@@ -242,7 +240,6 @@ async def handle_spin(callback: types.CallbackQuery):
         f"Spin လှည့်ခွင့် - {data[1]} ကြိမ်"
     )
 
-    # Spin ကျန်သေးပါက ဆက်လှည့်နိုင်မည့် ခလုတ် ပြသပေးခြင်း
     spin_again_kb = None
     if data[1] > 0:
         spin_again_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -256,7 +253,6 @@ async def handle_spin(callback: types.CallbackQuery):
         reply_markup=spin_again_kb
     )
 
-    # ၁,၀၀၀ ကျပ် ကံထူးပါက ၁ ရက်တိတိ Pin ထိုးပေးခြင်း
     if result == 1000:
         try:
             await bot.pin_chat_message(
@@ -268,7 +264,7 @@ async def handle_spin(callback: types.CallbackQuery):
         except Exception as e:
             print(f"Pin Error: {e}")
 
-    # မဲမပေါက်ပါက ၁၅ စက္ကန့်အကြာတွင် ဖျက်မည် (ဆုမဲပေါက်ပါက လူတိုင်းမြင်တွေ့နိုင်ရန် မဖျက်ဘဲ အမြဲချန်ထားမည်)
+    # မဲမပေါက်ပါက ၁၅ စက္ကန့်အကြာတွင် ဖျက်မည် (ဆုမဲပေါက်ပါက အမြဲချန်ထားမည်)
     if result == 0:
         await asyncio.sleep(15)
         try:
@@ -277,7 +273,7 @@ async def handle_spin(callback: types.CallbackQuery):
             pass
 
 # ==========================================================
-# 📋 Pending စာရင်း ကြည့်ရှုသည့် Callback (စာမပျောက်စေရန် Alert ဖြင့်သာ ပြသခြင်း)
+# 📋 Pending စာရင်း ကြည့်ရှုသည့် Callback
 # ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("pending_"))
 async def handle_pending_btn(callback: types.CallbackQuery):
@@ -288,7 +284,6 @@ async def handle_pending_btn(callback: types.CallbackQuery):
 
     pending_list = await db.get_user_pending_redemptions(orig_user_id)
     if not pending_list:
-        # စာရင်းမရှိပါက Alert အနေဖြင့် မျက်နှာပြင်ပေါ်တွင် ရှင်းလင်းစွာ ပြပေးမည် (Menu စာ မပျက်ပါ)
         await callback.answer("လွှဲရန်ကျန်ရှိသော ဖုန်းဘေလ်တောင်းဆိုမှု မရှိသေးပါ။", show_alert=True)
         return
 
@@ -310,11 +305,9 @@ async def handle_redeem_btn(callback: types.CallbackQuery):
 
     user = await db.get_or_create_user(orig_user_id, "", "")
     if user[3] < 1000:
-        # 1,000 Bill မပြည့်ပါက Alert ပြပြီး Menu စာကို ဆက်ထားမည်
         await callback.answer(f"အနည်းဆုံး 1,000 Bill ရှိမှသာ ဖုန်းဘေလ် လဲနိုင်ပါသည်! (လက်ရှိ: {user[3]} ကျပ်)", show_alert=True)
         return
 
-    # Bill ပြည့်ပါက Menu ကို ဖျက်ပြီး Private Bot Chat သို့ ချက်ချင်း လမ်းညွှန်မည်
     try:
         await callback.message.delete()
     except Exception:
@@ -401,7 +394,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     user_info = await db.get_or_create_user(uid, "", "")
     user_name = user_info[2] or "User"
 
-    # ၁။ Admin Log Group ထဲရှိ စာသားကို ပြီးစီးကြောင်း ပြောင်းလဲခြင်း
     updated_text = (
         f"✅ [ဘေလ်ဖြည့်ပြီးပါပြီ]\n\n"
         f"အကောင့်: {user_name} (`{uid}`)\n"
@@ -413,7 +405,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     await callback.message.edit_text(updated_text)
     await callback.answer("ဘေလ်ဖြည့်ပြီးကြောင်း မှတ်တမ်းတင်ပြီးပါပြီ။")
 
-    # ၂။ Main Group ၏ Lucky Spin Topic ထဲသို့ ဂုဏ်ပြုကြေငြာချက် ပို့ပေးခြင်း
     if SPIN_GROUP_ID != 0 and SPIN_TOPIC_ID != 0:
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! {user_name} သို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ!"
         try:
@@ -425,7 +416,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         except Exception as e:
             print(f"Announcement Error: {e}")
 
-    # ၃။ User ထံသို့လည်း Private DM အသိပေးစာ ပို့ပေးခြင်း
     try:
         await bot.send_message(
             chat_id=uid,
@@ -435,8 +425,59 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         pass
 
 # ==========================================================
-# 👑 Owner သီးသန့် Admin Commands (/givebill, /givetoken, /top15, /detail)
+# 👑 Owner သီးသန့် Admin Commands (/backup, /restore, /givebill, etc.)
 # ==========================================================
+
+# 📦 /backup — အချိန်မရွေး လက်ရှိ Database ဖိုင်ကို Admin Group သို့ တန်းပို့ပေးခြင်း
+@dp.message(Command("backup"))
+async def cmd_manual_backup(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+
+    if not os.path.exists(db.DB_NAME):
+        await message.reply("❌ Database ဖိုင် မရှိသေးပါ။")
+        return
+
+    if ADMIN_LOG_GROUP_ID == 0:
+        await message.reply("❌ ADMIN_LOG_GROUP_ID သတ်မှတ်မထားပါ။")
+        return
+
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        backup_file = FSInputFile(db.DB_NAME, filename=f"backup_manual_{now_str}.db")
+        await bot.send_document(
+            chat_id=ADMIN_LOG_GROUP_ID,
+            document=backup_file,
+            caption=f"📦 **Update Database Backup**\n\n📅 အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n👤 ထုတ်ယူသူ: Owner"
+        )
+        await message.reply("✅ Update Database ဖိုင်ကို Admin Group ထံသို့ အောင်မြင်စွာ ပို့ပေးလိုက်ပါပြီ။")
+    except Exception as e:
+        await message.reply(f"❌ Backup ပို့ရာတွင် အမှားဖြစ်သွားပါသည်: {e}")
+
+# 🔄 /restore — Admin Group ထဲရှိ .db ဖိုင်ကို Reply လုပ်၍ ပြန်လည် အစားထိုးခြင်း
+@dp.message(Command("restore"))
+async def cmd_restore(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply("💡 Restore လုပ်ရန် Admin Group သို့ ရောက်နေသော `.db` ဖိုင်ကို Reply ထောက်၍ `/restore` ဟု ရိုက်ပေးပါ။")
+        return
+
+    doc = message.reply_to_message.document
+    if not doc.file_name.endswith(".db"):
+        await message.reply("❌ `.db` ဖိုင်အမျိုးအစားသာ ဖြစ်ရပါမည်။")
+        return
+
+    status_msg = await message.reply("⏳ Database ဖိုင်ကို ပြန်လည် ထည့်သွင်းနေပါသည်...")
+    try:
+        file_info = await bot.get_file(doc.file_id)
+        await bot.download_file(file_info.file_path, destination=db.DB_NAME)
+        await status_msg.edit_text("✅ **Database Restore အောင်မြင်ပါပြီ!**\n\nမှတ်တမ်းဟောင်းများ အားလုံး အောင်မြင်စွာ ပြန်လည် အစားထိုးပြီးပါပြီ။")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Restore ပြုလုပ်ရာတွင် အမှားဖြစ်သွားပါသည်: {e}")
+
+# /givebill <ပမာဏ> (Bill မုန့်ဖိုးပေးခြင်း)
 @dp.message(Command("givebill"))
 async def cmd_givebill(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -473,6 +514,7 @@ async def cmd_givebill(message: types.Message):
     new_c = await db.add_coins(target_user.id, amount)
     await message.reply(f"{target_user.first_name} သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_c} ကျပ်)")
 
+# /givetoken <ပမာဏ> (မဲလှည့်ခွင့် Token ပေးခြင်း)
 @dp.message(Command("givetoken"))
 async def cmd_givetoken(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -487,6 +529,7 @@ async def cmd_givetoken(message: types.Message):
     else:
         await message.reply("User စာကို Reply လုပ်၍ /givetoken 1 ဟု ရိုက်ပေးပါ။")
 
+# /top15 (ထိပ်သီး ၁၅ ဦး စစ်ဆေးခြင်း)
 @dp.message(Command("top15"))
 async def cmd_top15(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -503,6 +546,7 @@ async def cmd_top15(message: types.Message):
         text += f"{i}. {u_str} — {c} ကျပ် (Spin: {t} ကြိမ်)\n"
     await message.reply(text)
 
+# /detail (User အချက်အလက် စစ်ဆေးခြင်း)
 @dp.message(Command("detail"))
 async def cmd_detail(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
