@@ -29,6 +29,17 @@ async def init_db():
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # ဘေလ်လဲလှယ်မှု မှတ်တမ်းနှင့် Pending စာရင်းဇယား
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS redemptions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                operator TEXT,
+                phone TEXT,
+                status TEXT DEFAULT 'pending',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         await db.commit()
 
 async def get_or_create_user(user_id: int, username: str, first_name: str):
@@ -63,19 +74,18 @@ async def record_invitation(inviter_id: int, new_member_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT user_id FROM invited_members WHERE user_id = ?", (new_member_id,))
         if await cursor.fetchone():
-            return False  # ထွက်လိုက်ဝင်လိုက် လုပ်သူကို Token မပေးပါ
+            return False
         
         await db.execute("INSERT INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
         
-        # Invite count စစ်ဆေးခြင်း
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
         tokens_to_add = 0
         if total_invites % 2 == 0:
-            tokens_to_add += 1  # လူ ၂ ယောက်ပြည့်တိုင်း Token ၁ ခု
+            tokens_to_add += 1
         if total_invites % 10 == 0:
-            tokens_to_add += 1  # လူ ၁၀ ယောက် Milestone Bonus Free Token ၁ ခု
+            tokens_to_add += 1
             
         if tokens_to_add > 0:
             await db.execute("UPDATE users SET tokens = tokens + ? WHERE user_id = ?", (tokens_to_add, inviter_id))
@@ -89,7 +99,6 @@ async def spin_wheel(user_id: int):
         user = await cursor.fetchone()
         tokens, losses, daily_spins, last_date = user
 
-        # Daily spin reset
         if last_date != today:
             daily_spins = 0
             last_date = today
@@ -99,7 +108,7 @@ async def spin_wheel(user_id: int):
         if tokens < 1:
             return "NO_TOKEN", 0
 
-        # Pity System စစ်ဆေးခြင်း (၂ ကြိမ်ဆက် ရှုံးပါက ၃ ကြိမ်မြောက် အာမခံ)
+        # Pity System စစ်ဆေးခြင်း (၂ ကြိမ်ဆက် မပေါက်ပါက ၃ ကြိမ်မြောက် အာမခံ)
         if losses >= 2:
             prize = random.choice([50, 100])
             new_losses = 0
@@ -121,3 +130,31 @@ async def spin_wheel(user_id: int):
         cursor = await db.execute("SELECT coins, tokens FROM users WHERE user_id = ?", (user_id,))
         res = await cursor.fetchone()
         return prize, res
+
+# --- Pending & Redeem လုပ်ဆောင်ချက်များ ---
+async def create_redemption(user_id: int, operator: str, phone: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "INSERT INTO redemptions (user_id, operator, phone, status) VALUES (?, ?, ?, 'pending')",
+            (user_id, operator, phone)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+async def approve_redemption(redemption_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id, operator, phone, status FROM redemptions WHERE id = ?", (redemption_id,))
+        row = await cursor.fetchone()
+        if row and row[3] == "pending":
+            await db.execute("UPDATE redemptions SET status = 'approved' WHERE id = ?", (redemption_id,))
+            await db.commit()
+            return row
+        return None
+
+async def get_user_pending_redemptions(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT operator, phone, created_at FROM redemptions WHERE user_id = ? AND status = 'pending' ORDER BY id DESC",
+            (user_id,)
+        )
+        return await cursor.fetchall()
