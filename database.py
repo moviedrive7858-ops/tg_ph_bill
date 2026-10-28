@@ -82,7 +82,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
-        # လူ ၂ ယောက် Add တိုင်း Spin ၁ ကြိမ် အတိအကျ ပေးခြင်း (၁၀ ယောက် အပိုဆု လုံးဝ မပါတော့ပါ)
+        # လူ ၂ ယောက် Add တိုင်း Spin ၁ ကြိမ် အတိအကျ ပေးခြင်း (၁၀ ယောက် အပိုဆု မပါပါ)
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -102,11 +102,11 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             daily_spins = 0
             last_date = today
 
-        # Token ရှိ/မရှိ စစ်ဆေးခြင်း (Owner ရော User ရော အနည်းဆုံး ၁ ကြိမ် လိုအပ်သည်)
+        # Token စစ်ဆေးခြင်း (Owner ရော User ရော အနည်းဆုံး ၁ ကြိမ် လိုအပ်သည်)
         if tokens < 1:
             return "NO_TOKEN", 0
 
-        # Owner မဟုတ်မှသာ Daily Limit ၁၀ ကြိမ် စစ်ဆေးမည် (Owner ဖြစ်ပါက Limit ကျော်ဖြတ်မည်)
+        # Owner မဟုတ်မှသာ Daily Limit ၁၀ ကြိမ် စစ်ဆေးမည်
         if not is_owner and daily_spins >= 10:
             return "LIMIT_REACHED", 0
 
@@ -118,8 +118,7 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             prize = random.choices(PRIZES, weights=WEIGHTS, k=1)[0]
             new_losses = losses + 1 if prize == 0 else 0
 
-        # Owner ရော User ရော Token ကို ၁ ခု နုတ်မည်
-        # သို့သော် Owner အတွက် Daily Spin အကြိမ်ရေ မတိုးစေပါ
+        # Token ကို ၁ ခု ဖြတ်မည်၊ Owner ဖြစ်ပါက Daily Spin ကန့်သတ်ချက်ကို မတိုးပါ
         spin_increment = 0 if is_owner else 1
 
         await db.execute("""
