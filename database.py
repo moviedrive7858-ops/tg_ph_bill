@@ -157,3 +157,38 @@ async def approve_redemption(redemption_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT user_id, operator, phone, status FROM redemptions WHERE id = ?", (redemption_id,))
         row = await cursor.fetchone()
+        if row and row[3] == "pending":
+            await db.execute("UPDATE redemptions SET status = 'approved' WHERE id = ?", (redemption_id,))
+            await db.commit()
+            return row
+        return None
+
+async def get_user_pending_redemptions(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT operator, phone, created_at FROM redemptions WHERE user_id = ? AND status = 'pending' ORDER BY id DESC",
+            (user_id,)
+        )
+        return await cursor.fetchall()
+
+async def get_top_10():
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT first_name, username, coins, tokens FROM users ORDER BY coins DESC LIMIT 10")
+        return await cursor.fetchall()
+
+async def get_user_detail(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user = await cursor.fetchone()
+        if not user:
+            return None
+        c_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (user_id,))
+        inv_count = (await c_cursor.fetchone())[0]
+        return user, inv_count
+
+async def get_user_by_username(username: str):
+    clean_un = username.lstrip("@")
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (clean_un,))
+        row = await cursor.fetchone()
+        return row[0] if row else None
