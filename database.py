@@ -82,7 +82,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
-        # လူ ၂ ယောက် Add တိုင်း Spin ၁ ကြိမ် အတိအကျ ပေးခြင်း (၁၀ ယောက် အပိုဆု မပါပါ)
+        # လူ ၂ ယောက် Add တိုင်း Spin ၁ ကြိမ် အတိအကျ ပေးခြင်း (၁၀ ယောက် အပိုဆု လုံးဝ မပါတော့ပါ)
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -94,15 +94,22 @@ async def record_invitation(inviter_id: int, new_member_id: int):
 async def spin_wheel(user_id: int, is_owner: bool = False):
     today = datetime.now().strftime("%Y-%m-%d")
     async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT tokens, consecutive_losses, daily_spins, last_spin_date FROM users WHERE user_id = ?", (user_id,))
+        cursor = await db.execute(
+            "SELECT tokens, consecutive_losses, daily_spins, last_spin_date, coins FROM users WHERE user_id = ?", 
+            (user_id,)
+        )
         user = await cursor.fetchone()
-        tokens, losses, daily_spins, last_date = user
+        tokens, losses, daily_spins, last_date, coins = user
 
         if last_date != today:
             daily_spins = 0
             last_date = today
 
-        # Token စစ်ဆေးခြင်း (Owner ရော User ရော အနည်းဆုံး ၁ ကြိမ် လိုအပ်သည်)
+        # 🛑 အများဆုံး ၃,၀၀၀ ကျပ် ပြည့်နေပါက မဲလှည့်ခွင့် ခေတ္တပိတ်မည် (Owner ကို မကန့်သတ်ပါ)
+        if not is_owner and coins >= 3000:
+            return "MAX_BALANCE_REACHED", coins
+
+        # Token ရှိ/မရှိ စစ်ဆေးခြင်း
         if tokens < 1:
             return "NO_TOKEN", 0
 
@@ -118,7 +125,8 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             prize = random.choices(PRIZES, weights=WEIGHTS, k=1)[0]
             new_losses = losses + 1 if prize == 0 else 0
 
-        # Token ကို ၁ ခု ဖြတ်မည်၊ Owner ဖြစ်ပါက Daily Spin ကန့်သတ်ချက်ကို မတိုးပါ
+        # Owner ရော User ရော Token ကို ၁ ခု နုတ်မည်
+        # Owner အတွက် Daily Spin အကြိမ်ရေ မတိုးစေပါ
         spin_increment = 0 if is_owner else 1
 
         await db.execute("""
@@ -149,38 +157,3 @@ async def approve_redemption(redemption_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT user_id, operator, phone, status FROM redemptions WHERE id = ?", (redemption_id,))
         row = await cursor.fetchone()
-        if row and row[3] == "pending":
-            await db.execute("UPDATE redemptions SET status = 'approved' WHERE id = ?", (redemption_id,))
-            await db.commit()
-            return row
-        return None
-
-async def get_user_pending_redemptions(user_id: int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute(
-            "SELECT operator, phone, created_at FROM redemptions WHERE user_id = ? AND status = 'pending' ORDER BY id DESC",
-            (user_id,)
-        )
-        return await cursor.fetchall()
-
-async def get_top_10():
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT first_name, username, coins, tokens FROM users ORDER BY coins DESC LIMIT 10")
-        return await cursor.fetchall()
-
-async def get_user_detail(user_id: int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-        user = await cursor.fetchone()
-        if not user:
-            return None
-        c_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (user_id,))
-        inv_count = (await c_cursor.fetchone())[0]
-        return user, inv_count
-
-async def get_user_by_username(username: str):
-    clean_un = username.lstrip("@")
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (clean_un,))
-        row = await cursor.fetchone()
-        return row[0] if row else None
