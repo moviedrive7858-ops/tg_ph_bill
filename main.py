@@ -240,19 +240,6 @@ async def handle_spin(callback: types.CallbackQuery):
             pass
         return
 
-    if result == "LIMIT_REACHED":
-        msg = await bot.send_message(
-            chat_id=chat_id,
-            message_thread_id=thread_id,
-            text=f"{callback.from_user.first_name}\nယနေ့အတွက် မဲလှည့်ခွင့် ၁၀ ကြိမ် ပြည့်သွားပါပြီ။ မနက်ဖြန်မှ ထပ်မံကြိုးစားပါ။"
-        )
-        await asyncio.sleep(15)
-        try:
-            await msg.delete()
-        except Exception:
-            pass
-        return
-
     if result > 0:
         prize_text = f"သင် {result} Bill ကံထူးသွားပါပြီ!"
     else:
@@ -278,7 +265,7 @@ async def handle_spin(callback: types.CallbackQuery):
         reply_markup=spin_again_kb
     )
 
-    # 📢 မဲပေါက်ပါက အောက်တွင် Topic ကြေငြာချက် သီးသန့်ပို့ပေးခြင်း (အမြဲတမ်း ချန်ထားမည်၊ Pin မထိုးပါ)
+    # 📢 မဲပေါက်ပါက အောက်တွင် Topic ကြေငြာချက် သီးသန့်ပို့ပေးခြင်း
     if result > 0:
         await bot.send_message(
             chat_id=chat_id,
@@ -367,7 +354,7 @@ async def submit_phone(message: types.Message, state: FSMContext):
     await state.clear()
 
 # ==========================================================
-# 👑 Owner Approve Button (ဖြည့်ပြီးပါက Topic ထဲ ကြေငြာမည်၊ Pin မထိုးပါ၊ ပြန်မဖျက်ပါ)
+# 👑 Owner Approve Button
 # ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("approve_"))
 async def handle_approve_btn(callback: types.CallbackQuery):
@@ -398,7 +385,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     await callback.message.edit_text(updated_text)
     await callback.answer("ဘေလ်ဖြည့်ပြီးကြောင်း မှတ်တမ်းတင်ပြီးပါပြီ။")
 
-    # ၂။ Main Group ၏ Lucky Spin Topic ထဲသို့ ကြေငြာချက်ပို့ပေးခြင်း (Pin မထိုးပါ၊ ပြန်မဖျက်ပါ)
+    # ၂။ Main Group ၏ Lucky Spin Topic ထဲသို့ ကြေငြာချက်ပို့ပေးခြင်း
     if SPIN_GROUP_ID != 0 and SPIN_TOPIC_ID != 0:
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! {user_name} သို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ!"
         try:
@@ -468,8 +455,7 @@ async def cmd_detail(message: types.Message):
         f"🆔 User ID: `{u[0]}`\n"
         f"💰 Bill လက်ကျန်: **{u[3]} ကျပ်**\n"
         f"🎟️ Spin လှည့်ခွင့်: **{u[4]} ကြိမ်**\n"
-        f"👥 Add ခဲ့သူ: **{inv_count} ယောက်**\n"
-        f"🎰 ယနေ့မဲလှည့်ပြီး: **{u[6]}/10 ကြိမ်**"
+        f"👥 Add ခဲ့သူ: **{inv_count} ယောက်**"
     )
 
 @dp.message(Command("backup"))
