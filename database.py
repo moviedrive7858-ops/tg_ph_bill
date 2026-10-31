@@ -4,7 +4,6 @@ from datetime import datetime
 
 DB_NAME = "bot_database.db"
 
-# နဂိုမူလ သတ်မှတ်ထားသော Probability Weights (၈ မျိုး)
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
 WEIGHTS = [64.0, 16.0, 6.5, 5.0, 4.0, 2.5, 1.5, 0.5]
 
@@ -82,7 +81,6 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
-        # လူ ၂ ယောက် Add တိုင်း Spin ၁ ကြိမ် အတိအကျ ပေးခြင်း (၁၀ ယောက် အပိုဆု လုံးဝ မပါတော့ပါ)
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -95,15 +93,11 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
     today = datetime.now().strftime("%Y-%m-%d")
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
-            "SELECT tokens, consecutive_losses, daily_spins, last_spin_date, coins FROM users WHERE user_id = ?", 
+            "SELECT tokens, consecutive_losses, coins FROM users WHERE user_id = ?", 
             (user_id,)
         )
         user = await cursor.fetchone()
-        tokens, losses, daily_spins, last_date, coins = user
-
-        if last_date != today:
-            daily_spins = 0
-            last_date = today
+        tokens, losses, coins = user
 
         # 🛑 အများဆုံး ၃,၀၀၀ ကျပ် ပြည့်နေပါက မဲလှည့်ခွင့် ခေတ္တပိတ်မည် (Owner ကို မကန့်သတ်ပါ)
         if not is_owner and coins >= 3000:
@@ -113,10 +107,6 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         if tokens < 1:
             return "NO_TOKEN", 0
 
-        # Owner မဟုတ်မှသာ Daily Limit ၁၀ ကြိမ် စစ်ဆေးမည်
-        if not is_owner and daily_spins >= 10:
-            return "LIMIT_REACHED", 0
-
         # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက ၅၀ သို့မဟုတ် ၁၀၀ အာမခံ)
         if losses >= 2:
             prize = random.choice([50, 100])
@@ -125,19 +115,14 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             prize = random.choices(PRIZES, weights=WEIGHTS, k=1)[0]
             new_losses = losses + 1 if prize == 0 else 0
 
-        # Owner ရော User ရော Token ကို ၁ ခု နုတ်မည်
-        # Owner အတွက် Daily Spin အကြိမ်ရေ မတိုးစေပါ
-        spin_increment = 0 if is_owner else 1
-
         await db.execute("""
             UPDATE users 
             SET tokens = tokens - 1, 
                 coins = coins + ?, 
                 consecutive_losses = ?, 
-                daily_spins = daily_spins + ?, 
                 last_spin_date = ? 
             WHERE user_id = ?
-        """, (prize, new_losses, spin_increment, last_date, user_id))
+        """, (prize, new_losses, today, user_id))
         await db.commit()
 
         cursor = await db.execute("SELECT coins, tokens FROM users WHERE user_id = ?", (user_id,))
