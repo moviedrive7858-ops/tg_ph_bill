@@ -8,6 +8,10 @@ DB_NAME = "bot_database.db"
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
 WEIGHTS = [64.0, 16.0, 6.5, 5.0, 4.0, 2.5, 1.5, 0.5]
 
+# ၃ ကြိမ်မြောက် Pity အတွက် ၀ ကျပ်ကို ဖယ်ထုတ်ထားသော ဆုမဲများနှင့် မူလ Weights အချိုး
+PITY_PRIZES = [50, 100, 150, 200, 300, 500, 1000]
+PITY_WEIGHTS = [16.0, 6.5, 5.0, 4.0, 2.5, 1.5, 0.5]
+
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("""
@@ -109,15 +113,15 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         if tokens < 1:
             return "NO_TOKEN", 0
 
-        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက ၅၀ မှ ၂၀၀ အထိ အာမခံဆု ပေးခြင်း)
+        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက မပေါက်မဲ 0 ကို ဖယ်ထုတ်ပြီး ကျန်ဆုများကို မူလအချိုးအစားအတိုင်း အာမခံပေါက်စေခြင်း)
         if losses >= 2:
-            prize = random.choice([50, 100, 150, 200])
+            prize = random.choices(PITY_PRIZES, weights=PITY_WEIGHTS, k=1)[0]
             new_losses = 0
         else:
             prize = random.choices(PRIZES, weights=WEIGHTS, k=1)[0]
             new_losses = losses + 1 if prize == 0 else 0
 
-        # Daily limit မရှိတော့သဖြင့် token 1 ခုသာ ဖြတ်ပြီး ဒေတာ update လုပ်ခြင်း
+        # Token 1 ခု ဖြတ်ပြီး ဒေတာ update လုပ်ခြင်း
         await db.execute("""
             UPDATE users 
             SET tokens = tokens - 1, 
