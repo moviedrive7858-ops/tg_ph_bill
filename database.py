@@ -4,6 +4,7 @@ from datetime import datetime
 
 DB_NAME = "bot_database.db"
 
+# နဂိုမူလ သတ်မှတ်ထားသော Probability Weights (၈ မျိုး)
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
 WEIGHTS = [64.0, 16.0, 6.5, 5.0, 4.0, 2.5, 1.5, 0.5]
 
@@ -81,6 +82,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
+        # လူ ၂ ယောက် Add တိုင်း Spin ၁ ကြိမ် အတိအကျ ပေးခြင်း
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -107,14 +109,15 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         if tokens < 1:
             return "NO_TOKEN", 0
 
-        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက ၅၀ သို့မဟုတ် ၁၀၀ အာမခံ)
+        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက ၅၀ မှ ၂၀၀ အထိ အာမခံဆု ပေးခြင်း)
         if losses >= 2:
-            prize = random.choice([50, 100])
+            prize = random.choice([50, 100, 150, 200])
             new_losses = 0
         else:
             prize = random.choices(PRIZES, weights=WEIGHTS, k=1)[0]
             new_losses = losses + 1 if prize == 0 else 0
 
+        # Daily limit မရှိတော့သဖြင့် token 1 ခုသာ ဖြတ်ပြီး ဒေတာ update လုပ်ခြင်း
         await db.execute("""
             UPDATE users 
             SET tokens = tokens - 1, 
