@@ -4,13 +4,16 @@ from datetime import datetime
 
 DB_NAME = "bot_database.db"
 
-# နဂိုမူလ သတ်မှတ်ထားသော Probability Weights (၈ မျိုး)
+# ==========================================================
+# 🎰 ပေါက်နှုန်း သတ်မှတ်ချက်များ
+# ==========================================================
+# ပုံမှန်လှည့်ချိန် ပေါက်နှုန်း (ဆုကြီးများ မဖောင်းပွစေရန် ထိန်းထားသည်)
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
-WEIGHTS = [64.0, 16.0, 6.5, 5.0, 4.0, 2.5, 1.5, 0.5]
+WEIGHTS = [65.0, 18.0, 8.0, 4.5, 2.5, 1.2, 0.6, 0.2]
 
-# ၃ ကြိမ်မြောက် Pity အတွက် ၀ ကျပ်ကို ဖယ်ထုတ်ထားသော ဆုမဲများနှင့် မူလ Weights အချိုး
-PITY_PRIZES = [50, 100, 150, 200, 300, 500, 1000]
-PITY_WEIGHTS = [16.0, 6.5, 5.0, 4.0, 2.5, 1.5, 0.5]
+# ၃ ကြိမ်မြောက် Pity (နှစ်သိမ့်ဆု): အများဆုံး ၂၀၀ အထိသာ ပေးပြီး နဂိုအချိုးအတိုင်း ခွဲထားသည်
+PITY_PRIZES = [50, 100, 150, 200]
+PITY_WEIGHTS = [18.0, 8.0, 4.5, 2.5]
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -86,7 +89,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
-        # လူ ၂ ယောက် Add တိုင်း Spin ၁ ကြိမ် အတိအကျ ပေးခြင်း
+        # လူ ၂ ယောက် Add လျှင် Spin ၁ ကြိမ် ရရှိမည်
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -105,7 +108,7 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         user = await cursor.fetchone()
         tokens, losses, coins = user
 
-        # 🛑 အများဆုံး ၃,၀၀၀ ကျပ် ပြည့်နေပါက မဲလှည့်ခွင့် ခေတ္တပိတ်မည် (Owner ကို မကန့်သတ်ပါ)
+        # 🛑 အများဆုံး ၃,၀၀၀ ကျပ် ပြည့်နေပါက မဲလှည့်ခွင့် ခေတ္တပိတ်ထားမည်
         if not is_owner and coins >= 3000:
             return "MAX_BALANCE_REACHED", coins
 
@@ -113,7 +116,7 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         if tokens < 1:
             return "NO_TOKEN", 0
 
-        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက မပေါက်မဲ 0 ကို ဖယ်ထုတ်ပြီး ကျန်ဆုများကို မူလအချိုးအစားအတိုင်း အာမခံပေါက်စေခြင်း)
+        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက အများဆုံး ၂၀၀ အထိသာ နှစ်သိမ့်ဆု ပေးမည်)
         if losses >= 2:
             prize = random.choices(PITY_PRIZES, weights=PITY_WEIGHTS, k=1)[0]
             new_losses = 0
