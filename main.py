@@ -102,7 +102,7 @@ async def auto_backup_task():
             print(f"Auto Backup Error: {e}")
 
 # ==========================================================
-# 👥 Member Add စစ်ဆေးခြင်း
+# 👥 Member Add စစ်ဆေးခြင်း (Race Condition အမှား မတက်စေရန် ပြင်ဆင်ပြီး)
 # ==========================================================
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(LEFT | KICKED | RESTRICTED) >> (MEMBER | ADMINISTRATOR | CREATOR)))
 async def on_user_join(event: ChatMemberUpdated):
@@ -122,23 +122,28 @@ async def new_member_message_handler(message: types.Message):
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
         return
     inviter = message.from_user
+    if not inviter or inviter.is_bot:
+        return
+
+    # Loop မပတ်မီ ဖိတ်ခေါ်သူအား အရင် ၁ ကြိမ်သာ Register လုပ်မည်
+    await db.get_or_create_user(inviter.id, inviter.username, inviter.first_name)
+
     for new_member in message.new_chat_members:
-        if new_member.is_bot or inviter.is_bot:
+        if new_member.is_bot or inviter.id == new_member.id:
             continue
-        if inviter.id != new_member.id:
-            await db.get_or_create_user(inviter.id, inviter.username, inviter.first_name)
-            await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
-            awarded = await db.record_invitation(inviter.id, new_member.id)
-            if awarded:
-                inviter_mention = f"@{inviter.username}" if inviter.username else inviter.first_name
-                try:
-                    await message.reply(
-                        f"🎉 ဂုဏ်ယူပါတယ် {inviter_mention}!\n"
-                        f"Member ၂ ယောက် ဖိတ်ခေါ်မှု ပြည့်မြောက်သဖြင့် 🎟️ **Spin Token ၁ ခု** ရရှိပါသည်!",
-                        parse_mode="Markdown"
-                    )
-                except Exception:
-                    pass
+        
+        await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
+        awarded = await db.record_invitation(inviter.id, new_member.id)
+        if awarded:
+            inviter_mention = f"@{inviter.username}" if inviter.username else inviter.first_name
+            try:
+                await message.reply(
+                    f"🎉 ဂုဏ်ယူပါတယ် {inviter_mention}!\n"
+                    f"Member ၂ ယောက် ဖိတ်ခေါ်မှု ပြည့်မြောက်သဖြင့် 🎟️ **Spin Token ၁ ခု** ရရှိပါသည်!",
+                    parse_mode="Markdown"
+                )
+            except Exception:
+                pass
 
 # ==========================================================
 # 🎮 Lucky Spin Menu
@@ -442,7 +447,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         pass
 
 # ==========================================================
-# 👑 Owner Commands (/top10, /detail, /backup, /restore, /givebill, /givetoken, /deduct)
+# 👑 Owner Commands
 # ==========================================================
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
@@ -493,6 +498,7 @@ async def cmd_detail(message: types.Message):
         f"👥 Add ခဲ့သူ: **{inv_count} ယောက်**"
     )
 
+# 💾 Backup Command: ရိုက်သည့်နေရာ (Private/Admin Group) သို့ တိုက်ရိုက် Reply ပြန်ပို့သည်
 @dp.message(Command("backup"))
 async def cmd_manual_backup(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -558,7 +564,6 @@ async def cmd_givebill(message: types.Message):
     target_name = "User"
     amount = 0
 
-    # နည်းလမ်း (၁) : စာကို Reply လုပ်၍ ပေးခြင်း (/givebill 50)
     if message.reply_to_message:
         target_user = message.reply_to_message.from_user
         if target_user.is_bot:
@@ -570,7 +575,6 @@ async def cmd_givebill(message: types.Message):
         if len(args) > 1 and args[1].isdigit():
             amount = int(args[1])
             
-    # နည်းလမ်း (၂) : ID သို့မဟုတ် Username ဖြင့် ပေးခြင်း (/givebill @username 50 သို့မဟုတ် /givebill 12345 50)
     else:
         if len(args) > 2 and args[2].isdigit():
             amount = int(args[2])
@@ -607,7 +611,6 @@ async def cmd_givetoken(message: types.Message):
     target_name = "User"
     amount = 0
 
-    # နည်းလမ်း (၁) : စာကို Reply လုပ်၍ ပေးခြင်း (/givetoken 1)
     if message.reply_to_message:
         target_user = message.reply_to_message.from_user
         if target_user.is_bot:
@@ -619,7 +622,6 @@ async def cmd_givetoken(message: types.Message):
         if len(args) > 1 and args[1].isdigit():
             amount = int(args[1])
             
-    # နည်းလမ်း (၂) : ID သို့မဟုတ် Username ဖြင့် ပေးခြင်း (/givetoken @username 1 သို့မဟုတ် /givetoken 12345 1)
     else:
         if len(args) > 2 and args[2].isdigit():
             amount = int(args[2])
