@@ -21,8 +21,8 @@ import database as db
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 SPIN_GROUP_ID = int(os.environ.get("SPIN_GROUP_ID", 0))      # Main Group ID (-1002672484902)
-SPIN_TOPIC_ID = int(os.environ.get("SPIN_TOPIC_ID", 0))      # Spin Topic ID
-ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))  # Optional: Admin Group ID
+SPIN_TOPIC_ID = int(os.environ.get("SPIN_TOPIC_ID", 0))      # Lucky Spin Topic ID
+ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))  # Private Admin Group ID
 
 GENERAL_TOPIC_ID = 1
 
@@ -55,7 +55,6 @@ def generate_drop_code() -> str:
     return "".join(combined)
 
 def is_valid_chat_message(text: str) -> bool:
-    """မြန်မာစာနှင့် English စာ နှစ်မျိုးစလုံး အဆင်ပြေစေမည့် Filter"""
     clean_text = text.strip()
     if len(clean_text) < 3:
         return False
@@ -70,7 +69,7 @@ class RedeemState(StatesGroup):
     waiting_for_phone = State()
 
 # ==========================================================
-# 🌐 Render Dummy Server (Port 8080)
+# 🌐 Render Dummy Web Server (Port 8080)
 # ==========================================================
 async def health_check(request):
     return web.Response(text="Bot is running active!")
@@ -443,7 +442,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         pass
 
 # ==========================================================
-# 👑 Owner Commands
+# 👑 Owner Commands (/top10, /detail, /backup, /restore, /givebill, /givetoken, /deduct)
 # ==========================================================
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
@@ -494,7 +493,6 @@ async def cmd_detail(message: types.Message):
         f"👥 Add ခဲ့သူ: **{inv_count} ယောက်**"
     )
 
-# 💾 Backup Command: ရိုက်သည့်နေရာ (Private ဖြစ်စေ၊ Admin Group ဖြစ်စေ) သို့ .db ဖိုင် တိုက်ရိုက် ပို့ပေးသည်
 @dp.message(Command("backup"))
 async def cmd_manual_backup(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -508,14 +506,12 @@ async def cmd_manual_backup(message: types.Message):
         now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         backup_file = FSInputFile(db.DB_NAME, filename=f"backup_manual_{now_str}.db")
         
-        # Command ရိုက်သည့်နေရာသို့ တိုက်ရိုက် Reply ပြန်ပို့ခြင်း
         await message.reply_document(
             document=backup_file,
             caption=f"📦 **Update Database Backup**\n\n📅 အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n👤 ထုတ်ယူသူ: Owner"
         )
         await status_msg.delete()
 
-        # Admin Log Group ရှိပါက ထိုနေရာသို့ပါ အပိုမိတ္တူ လှမ်းပို့ပေးခြင်း
         if ADMIN_LOG_GROUP_ID != 0 and message.chat.id != ADMIN_LOG_GROUP_ID:
             try:
                 await bot.send_document(
@@ -549,67 +545,106 @@ async def cmd_restore(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
+# ==========================================================
+# 🎁 Givebill Fixed
+# ==========================================================
 @dp.message(Command("givebill"))
 async def cmd_givebill(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
         return
+    
+    args = message.text.split()
     target_id = None
     target_name = "User"
-    if message.reply_to_message:
-        target_id = message.reply_to_message.from_user.id
-        target_name = message.reply_to_message.from_user.first_name
-
-    args = message.text.split()
     amount = 0
 
-    if target_id and len(args) > 1 and args[1].isdigit():
-        amount = int(args[1])
-    elif len(args) > 2 and args[2].isdigit():
-        amount = int(args[2])
-        param = args[1]
-        if param.isdigit():
-            target_id = int(param)
-        elif param.startswith("@"):
-            target_id = await db.get_user_by_username(param)
+    # နည်းလမ်း (၁) : စာကို Reply လုပ်၍ ပေးခြင်း (/givebill 50)
+    if message.reply_to_message:
+        target_user = message.reply_to_message.from_user
+        if target_user.is_bot:
+            await message.reply("❌ Bot များထံသို့ Bill ပေး၍ မရပါ။")
+            return
+        target_id = target_user.id
+        target_name = target_user.first_name
+        
+        if len(args) > 1 and args[1].isdigit():
+            amount = int(args[1])
+            
+    # နည်းလမ်း (၂) : ID သို့မဟုတ် Username ဖြင့် ပေးခြင်း (/givebill @username 50 သို့မဟုတ် /givebill 12345 50)
+    else:
+        if len(args) > 2 and args[2].isdigit():
+            amount = int(args[2])
+            param = args[1]
+            if param.isdigit():
+                target_id = int(param)
+            elif param.startswith("@"):
+                target_id = await db.get_user_by_username(param)
 
     if not target_id or amount <= 0:
-        await message.reply("အသုံးပြုနည်း:\n၁။ Reply ထောက်ပြီး /givebill 50\n၂။ /givebill @username 50\n၃။ /givebill [ID] 50")
+        await message.reply(
+            "💡 **အသုံးပြုနည်း:**\n"
+            "၁။ User စာကို Reply ထောက်ပြီး `/givebill 50`\n"
+            "၂။ `/givebill @username 50`\n"
+            "၃။ `/givebill 123456789 50`",
+            parse_mode="Markdown"
+        )
         return
 
+    await db.get_or_create_user(target_id, "", target_name)
     new_c = await db.add_coins(target_id, amount)
-    await message.reply(f"🎁 {target_name} (`{target_id}`) သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_c} ကျပ်)")
+    await message.reply(f"🎁 **{target_name}** (`{target_id}`) သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: **{new_c}** ကျပ်)")
 
+# ==========================================================
+# 🎟️ Givetoken Fixed
+# ==========================================================
 @dp.message(Command("givetoken"))
 async def cmd_givetoken(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
         return
+    
+    args = message.text.split()
     target_id = None
     target_name = "User"
-    if message.reply_to_message:
-        target_id = message.reply_to_message.from_user.id
-        target_name = message.reply_to_message.from_user.first_name
-
-    args = message.text.split()
     amount = 0
-    if target_id and len(args) > 1 and args[1].isdigit():
-        amount = int(args[1])
-    elif len(args) > 2 and args[2].isdigit():
-        amount = int(args[2])
-        param = args[1]
-        if param.isdigit():
-            target_id = int(param)
-        elif param.startswith("@"):
-            target_id = await db.get_user_by_username(param)
+
+    # နည်းလမ်း (၁) : စာကို Reply လုပ်၍ ပေးခြင်း (/givetoken 1)
+    if message.reply_to_message:
+        target_user = message.reply_to_message.from_user
+        if target_user.is_bot:
+            await message.reply("❌ Bot များထံသို့ Token ပေး၍ မရပါ။")
+            return
+        target_id = target_user.id
+        target_name = target_user.first_name
+        
+        if len(args) > 1 and args[1].isdigit():
+            amount = int(args[1])
+            
+    # နည်းလမ်း (၂) : ID သို့မဟုတ် Username ဖြင့် ပေးခြင်း (/givetoken @username 1 သို့မဟုတ် /givetoken 12345 1)
+    else:
+        if len(args) > 2 and args[2].isdigit():
+            amount = int(args[2])
+            param = args[1]
+            if param.isdigit():
+                target_id = int(param)
+            elif param.startswith("@"):
+                target_id = await db.get_user_by_username(param)
 
     if not target_id or amount <= 0:
-        await message.reply("အသုံးပြုနည်း:\n၁။ Reply ထောက်ပြီး /givetoken 1\n၂။ /givetoken @username 1\n၃။ /givetoken [ID] 1")
+        await message.reply(
+            "💡 **အသုံးပြုနည်း:**\n"
+            "၁။ User စာကို Reply ထောက်ပြီး `/givetoken 1`\n"
+            "၂။ `/givetoken @username 1`\n"
+            "၃။ `/givetoken 123456789 1`",
+            parse_mode="Markdown"
+        )
         return
 
+    await db.get_or_create_user(target_id, "", target_name)
     new_t = await db.add_tokens(target_id, amount)
-    await message.reply(f"🎟️ {target_name} (`{target_id}`) သို့ +{amount} Spin လှည့်ခွင့် ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_t} ကြိမ်)")
+    await message.reply(f"🎟️ **{target_name}** (`{target_id}`) သို့ +{amount} Spin Token ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: **{new_t}** ကြိမ်)")
 
 # ==========================================================
-# 🛑 Coin & Token ပြန်လည်နှုတ်ယူခြင်း Command (/deduct)
+# 🛑 Deduct Command Fixed
 # ==========================================================
 @dp.message(Command("deduct"))
 async def cmd_deduct(message: types.Message):
@@ -620,7 +655,6 @@ async def cmd_deduct(message: types.Message):
     target_id = None
     target_name = ""
 
-    # နည်းလမ်း (၁) : စာကို Reply ထောက်၍ နှုတ်ခြင်း (/deduct coin 500)
     if message.reply_to_message:
         target_user = message.reply_to_message.from_user
         if target_user.is_bot:
@@ -635,7 +669,6 @@ async def cmd_deduct(message: types.Message):
         item_type = args[1].lower()
         amount_str = args[2]
 
-    # နည်းလမ်း (၂) : ID သို့မဟုတ် Username ဖြင့် နှုတ်ခြင်း
     else:
         if len(args) < 4:
             await message.reply(
@@ -667,7 +700,7 @@ async def cmd_deduct(message: types.Message):
         return
     amount = int(amount_str)
 
-    await db.get_or_create_user(target_id, "", "")
+    await db.get_or_create_user(target_id, "", target_name)
 
     if item_type in ["coin", "coins", "bill", "money", "mmk"]:
         new_balance = await db.deduct_coins(target_id, amount)
@@ -730,7 +763,8 @@ async def handle_chat_activity(message: types.Message):
                     chat_id=message.chat.id,
                     message_thread_id=msg_topic_id,
                     text=(
-                        f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Token လက်ဆောင် ကုတ်နံပါတ်ကို အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
+                        f"⚡ **အမြန်ဆုံး ကောက်ယူသွားပါပြီ!**\n\n"
+                        f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Code `[{target_code}]` အား အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
                         f"🎟️ **Free Spin Token ၁ ခု** ရရှိသွားပါပြီ!\n\n"
                         f"👉 {winner_mention} ၏ လက်ကျန် Token: **{total_tokens} ခု**\n"
                         f"*(Spin Topic တွင် သွားရောက် ကံစမ်းနိုင်ပါပြီ)*"
@@ -756,14 +790,12 @@ async def handle_chat_activity(message: types.Message):
     if not is_valid_chat_message(text):
         return
 
-    # လူတစ်ယောက်တည်း ဆက်တိုက်ပို့ခြင်း မဟုတ်ပါက Count တိုးမည်
     if chat_stats["last_user_id"] == user.id:
         return
 
     chat_stats["count"] += 1
     chat_stats["last_user_id"] = user.id
 
-    # Render Logs ထဲတွင် Count တက်နေမှုကို အချိန်နှင့်တပြေးညီ ကြည့်နိုင်ရန်
     print(f"📊 Chat Count: {chat_stats['count']}/{MESSAGE_TARGET} | User: {user.first_name} | Text: {text[:15]}")
 
     if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
@@ -775,6 +807,7 @@ async def handle_chat_activity(message: types.Message):
             chat_id=message.chat.id,
             message_thread_id=msg_topic_id,
             text=(
+                f"🎉 **စကားဝိုင်း အစောင်ရေ {MESSAGE_TARGET} ပြည့်ပါပြီ!**\n\n"
                 f"🎟️ **Free Spin Token ကောက်ယူရန်:**\n"
                 f"ဤမက်ဆေ့ခ်ျအား **Reply** လုပ်ပြီး အောက်ပါ Code အား အမြန်ဆုံး ရိုက်ထည့်ပါ-\n\n"
                 f"👉 👉 👉  `{drop_code}`  👈 👈 👈\n\n"
