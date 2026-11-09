@@ -12,7 +12,6 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    ChatMemberHandler,
     ContextTypes,
     filters
 )
@@ -22,13 +21,13 @@ import database as db
 # ⚙️ Settings & Credentials
 # ==========================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-OWNER_ID = int(os.getenv("OWNER_ID", "0"))  # မိမိ Telegram User ID ထည့်ပါ
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
 # Topic ID သတ်မှတ်ချက်များ (General သီးသန့် Topic ရှိပါက ID ထည့်ပါ၊ မရှိပါက None)
 GENERAL_TOPIC_ID = None
 SPIN_TOPIC_ID = None
 
-# Chat Activity Drop Settings (စာအစောင်ရေ ၁၀၀ ပြည့်လျှင် ၁ ကြိမ် Drop ကျမည်)
+# စကားဝိုင်း ၁၀၀ ပြည့်လျှင် Token Drop ကျမည့် စနစ်
 MESSAGE_TARGET = 100
 
 chat_stats = {
@@ -39,7 +38,7 @@ chat_stats = {
 }
 
 # ==========================================================
-# 🌐 Render Port Binding (Dummy Web Server)
+# 🌐 Render Dummy Web Server (Port 8080)
 # ==========================================================
 async def dummy_health_check(request):
     return web.Response(text="Bot is running smoothly!")
@@ -52,13 +51,13 @@ async def start_dummy_server():
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
-    print(f"🌐 Dummy Server bound to port {port} for Render")
+    print(f"🌐 Server bound to port {port}")
 
 # ==========================================================
 # 🛠️ Helper Functions
 # ==========================================================
 def generate_drop_code() -> str:
-    """English စာလုံး ၃ လုံး နှင့် နံပါတ် ၂ လုံး ရောနှောထုတ်ပေးခြင်း (ဥပမာ- K7B2M)"""
+    """English စာလုံး ၃ လုံး နှင့် နံပါတ် ၂ လုံး ရောနှောထုတ်ပေးခြင်း"""
     letters = random.choices(string.ascii_uppercase, k=3)
     digits = random.choices(string.digits, k=2)
     combined = letters + digits
@@ -78,46 +77,37 @@ def is_valid_message(text: str) -> bool:
     return True
 
 # ==========================================================
-# 🤖 Bot Handlers
+# 👥 လူ Add လျှင် Token ပေးသည့် စနစ်
 # ==========================================================
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await db.get_or_create_user(user.id, user.username, user.first_name)
-    
-    keyboard = [
-        [InlineKeyboardButton("🎰 ကံစမ်းမဲ လှည့်မည်", callback_data="spin_wheel")],
-        [InlineKeyboardButton("💰 လက်ကျန်ငွေ / Token စစ်မည်", callback_data="check_balance")]
-    ]
-    await update.effective_message.reply_text(
-        f"မင်္ဂလာပါ {user.first_name}!\nLucky Spin Bot မှ ကြိုဆိုပါသည်ခင်ဗျာ။",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
+async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.effective_message
+    inviter = msg.from_user
 
-async def handle_chat_member_updated(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Member ၂ ယောက် Add လျှင် Token ၁ ခု ပေးခြင်း"""
-    result = update.chat_member
-    if not result:
+    if not msg or not msg.new_chat_members or not inviter or inviter.is_bot:
         return
 
-    if result.old_chat_member.status in ["left", "kicked"] and result.new_chat_member.status == "member":
-        inviter = result.from_user
-        new_member = result.new_chat_member.user
+    for new_member in msg.new_chat_members:
+        if new_member.is_bot or new_member.id == inviter.id:
+            continue
 
-        if inviter and not inviter.is_bot and not new_member.is_bot and inviter.id != new_member.id:
-            await db.get_or_create_user(inviter.id, inviter.username, inviter.first_name)
-            awarded = await db.record_invitation(inviter.id, new_member.id)
-            if awarded:
-                try:
-                    await context.bot.send_message(
-                        chat_id=inviter.id,
-                        text="🎉 သင့်ဖိတ်ခေါ်မှုကြောင့် Member ၂ ယောက် ပြည့်မြောက်ပြီး 🎟️ <b>Spin Token ၁ ခု</b> ရရှိပါသည်!",
-                        parse_mode=ParseMode.HTML
-                    )
-                except Exception:
-                    pass
+        await db.get_or_create_user(inviter.id, inviter.username, inviter.first_name)
+        awarded = await db.record_invitation(inviter.id, new_member.id)
 
+        if awarded:
+            try:
+                inviter_mention = f"@{inviter.username}" if inviter.username else f"<a href='tg://user?id={inviter.id}'>{inviter.first_name}</a>"
+                await msg.reply_text(
+                    f"🎉 ဂုဏ်ယူပါတယ် {inviter_mention}!\n"
+                    f"Member ၂ ယောက် ဖိတ်ခေါ်မှု ပြည့်မြောက်သဖြင့် 🎟️ <b>Spin Token ၁ ခု</b> ရရှိပါသည်!",
+                    parse_mode=ParseMode.HTML
+                )
+            except Exception:
+                pass
+
+# ==========================================================
+# 💬 General Chat စကားဝိုင်းနှင့် Drop ကောက်ယူခြင်း
+# ==========================================================
 async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """General ခန်း စကားဝိုင်းအား စစ်ဆေးပြီး Drop ချပေးခြင်း နှင့် ကောက်ယူမှု စစ်ဆေးခြင်း"""
     msg = update.effective_message
     user = update.effective_user
     chat = update.effective_chat
@@ -133,9 +123,7 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     text = msg.text or ""
 
-    # ------------------------------------------------------
-    # 🎯 အပိုင်း (က) : Drop Code ကို Reply ဖြင့် အရင်ဆုံး လုယူခြင်း
-    # ------------------------------------------------------
+    # Drop Code အား Reply ဖြင့် လုကောက်ခြင်း စစ်ဆေးမှု
     if chat_stats["active_drop_code"] and msg.reply_to_message:
         if msg.reply_to_message.message_id == chat_stats["drop_message_id"]:
             entered_code = text.strip().upper()
@@ -151,7 +139,6 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
 
                 winner_mention = f"@{user.username}" if user.username else f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
 
-                # General ခန်းထဲသို့ Winner အား Mention ဖြင့် ကြေငြာပေးခြင်း
                 await context.bot.send_message(
                     chat_id=chat.id,
                     message_thread_id=GENERAL_TOPIC_ID,
@@ -180,22 +167,17 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                     pass
                 return
 
-    # ------------------------------------------------------
-    # 📊 အပိုင်း (ခ) : စာကြောင်းရေ စစ်ဆေးခြင်း
-    # ------------------------------------------------------
+    # စာကြောင်းရေ ရေတွက်ခြင်း
     if not is_valid_message(text):
         return
 
-    # လူတစ်ယောက်တည်း ဆက်တိုက်ပို့ခြင်းကို မရေတွက်ပါ
     if chat_stats["last_user_id"] == user.id:
         return
 
     chat_stats["count"] += 1
     chat_stats["last_user_id"] = user.id
 
-    # ------------------------------------------------------
-    # 🎁 အပိုင်း (ဂ) : စာကြောင်းရေ ၁၀၀ ပြည့်ပါက Drop ချပေးခြင်း
-    # ------------------------------------------------------
+    # အစောင်ရေ ၁၀၀ ပြည့်လျှင် Drop ချခြင်း
     if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
         chat_stats["count"] = 0
         drop_code = generate_drop_code()
@@ -216,7 +198,7 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         chat_stats["drop_message_id"] = drop_msg.message_id
 
 # ==========================================================
-# 🛑 Admin Only: Token နှင့် Coin ပြန်လည်နှုတ်ယူခြင်း Command
+# 🛑 Deduct Command
 # ==========================================================
 async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
@@ -240,28 +222,14 @@ async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         target_name = target_user.first_name
 
         if len(args) < 2:
-            await msg.reply_text(
-                "⚠️ <b>Reply ဖြင့် နှုတ်ယူနည်း:</b>\n"
-                "• <code>/deduct coin 500</code>\n"
-                "• <code>/deduct token 2</code>",
-                parse_mode=ParseMode.HTML
-            )
+            await msg.reply_text("⚠️ <b>Reply ဖြင့် နှုတ်နည်း:</b>\n• <code>/deduct coin 500</code>\n• <code>/deduct token 2</code>", parse_mode=ParseMode.HTML)
             return
 
         item_type = args[0].lower()
         amount_str = args[1]
-
-    # နည်းလမ်း (၂) : ID သို့မဟုတ် Username ရိုက်ထည့်ပြီး နှုတ်ခြင်း
     else:
         if len(args) < 3:
-            await msg.reply_text(
-                "⚠️ <b>အသုံးပြုပုံ မမှန်ကန်ပါ!</b>\n\n"
-                "👉 <b>Reply ဖြင့် သုံးလိုပါက:</b>\n"
-                "User ၏ စာကို Reply လုပ်၍ <code>/deduct coin 500</code>\n\n"
-                "👉 <b>ID/Username ဖြင့် သုံးလိုပါက:</b>\n"
-                "<code>/deduct &lt;ID/@username&gt; &lt;coin/token&gt; &lt;ပမာဏ&gt;</code>",
-                parse_mode=ParseMode.HTML
-            )
+            await msg.reply_text("⚠️ <b>အသုံးပြုပုံ:</b>\n<code>/deduct &lt;ID/@username&gt; &lt;coin/token&gt; &lt;ပမာဏ&gt;</code>", parse_mode=ParseMode.HTML)
             return
 
         target_str, item_type, amount_str = args[0], args[1].lower(), args[2]
@@ -269,7 +237,7 @@ async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if target_str.startswith("@") or not target_str.isdigit():
             target_id = await db.get_user_by_username(target_str)
             if not target_id:
-                await msg.reply_text(f"❌ User <b>{target_str}</b> အား Database တွင် ရှာမတွေ့ပါ။", parse_mode=ParseMode.HTML)
+                await msg.reply_text(f"❌ User <b>{target_str}</b> အား ရှာမတွေ့ပါ။", parse_mode=ParseMode.HTML)
                 return
             target_name = target_str
         else:
@@ -285,24 +253,29 @@ async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if item_type in ["coin", "coins", "money", "mmk"]:
         new_balance = await db.deduct_coins(target_id, amount)
-        await msg.reply_text(
-            f"✅ <b>{target_name}</b> ထံမှ ဘေလ် <b>{amount} MMK</b> အောင်မြင်စွာ နှုတ်ယူပြီးပါပြီ!\n"
-            f"💰 လက်ကျန်ငွေ: <b>{new_balance} MMK</b>",
-            parse_mode=ParseMode.HTML
-        )
+        await msg.reply_text(f"✅ <b>{target_name}</b> ထံမှ ဘေလ် <b>{amount} MMK</b> နှုတ်ယူပြီးပါပြီ!\n💰 လက်ကျန်ငွေ: <b>{new_balance} MMK</b>", parse_mode=ParseMode.HTML)
     elif item_type in ["token", "tokens"]:
         new_tokens = await db.deduct_tokens(target_id, amount)
-        await msg.reply_text(
-            f"✅ <b>{target_name}</b> ထံမှ Token <b>{amount} ခု</b> အောင်မြင်စွာ နှုတ်ယူပြီးပါပြီ!\n"
-            f"🎟️ လက်ကျန် Token: <b>{new_tokens} ခု</b>",
-            parse_mode=ParseMode.HTML
-        )
+        await msg.reply_text(f"✅ <b>{target_name}</b> ထံမှ Token <b>{amount} ခု</b> နှုတ်ယူပြီးပါပြီ!\n🎟️ လက်ကျန် Token: <b>{new_tokens} ခု</b>", parse_mode=ParseMode.HTML)
     else:
         await msg.reply_text("❌ <code>coin</code> သို့မဟုတ် <code>token</code> ဟု ရွေးချယ်ပေးပါ။", parse_mode=ParseMode.HTML)
 
 # ==========================================================
-# 🔘 Inline Button Callbacks
+# 🎰 Spin & Balance Buttons
 # ==========================================================
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await db.get_or_create_user(user.id, user.username, user.first_name)
+    
+    keyboard = [
+        [InlineKeyboardButton("🎰 ကံစမ်းမဲ လှည့်မည်", callback_data="spin_wheel")],
+        [InlineKeyboardButton("💰 လက်ကျန်ငွေ / Token စစ်မည်", callback_data="check_balance")]
+    ]
+    await update.effective_message.reply_text(
+        f"မင်္ဂလာပါ {user.first_name}!\nLucky Spin Bot မှ ကြိုဆိုပါသည်ခင်ဗျာ။",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -348,22 +321,23 @@ async def run_bot():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("deduct", deduct_command))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
-    app.add_handler(ChatMemberHandler(handle_chat_member_updated, ChatMemberHandler.CHAT_MEMBER))
+    
+    # လူ Add လျှင် ဖမ်းယူမည့် Handler
+    app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
+    
+    # General Chat စာကြောင်းရေ စစ်ဆေးမည့် Handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_general_chat))
 
-    # Render Port Binding အတွက် Dummy Server စတင်ခြင်း
+    # Render Port Binding အတွက် Dummy Server ဖွင့်လှစ်ခြင်း
     await start_dummy_server()
 
     print("🤖 Bot is starting polling...")
     await app.initialize()
     await app.start()
     await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-
-    # Bot ဆက်လက် အလုပ်လုပ်နေစေရန် ထိန်းထားခြင်း
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
