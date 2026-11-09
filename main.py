@@ -23,11 +23,8 @@ import database as db
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
 OWNER_ID = int(os.getenv("OWNER_ID", "0"))
 
-# Topic ID သတ်မှတ်ချက်များ (General သီးသန့် Topic ရှိပါက ID ထည့်ပါ၊ မရှိပါက None)
 GENERAL_TOPIC_ID = None
 SPIN_TOPIC_ID = None
-
-# စကားဝိုင်း ၁၀၀ ပြည့်လျှင် Token Drop ကျမည့် စနစ်
 MESSAGE_TARGET = 100
 
 chat_stats = {
@@ -57,7 +54,6 @@ async def start_dummy_server():
 # 🛠️ Helper Functions
 # ==========================================================
 def generate_drop_code() -> str:
-    """English စာလုံး ၃ လုံး နှင့် နံပါတ် ၂ လုံး ရောနှောထုတ်ပေးခြင်း"""
     letters = random.choices(string.ascii_uppercase, k=3)
     digits = random.choices(string.digits, k=2)
     combined = letters + digits
@@ -105,7 +101,7 @@ async def handle_new_members(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 pass
 
 # ==========================================================
-# 💬 General Chat စကားဝိုင်းနှင့် Drop ကောက်ယူခြင်း
+# 💬 General Chat Drop စနစ်
 # ==========================================================
 async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.effective_message
@@ -123,7 +119,6 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     text = msg.text or ""
 
-    # Drop Code အား Reply ဖြင့် လုကောက်ခြင်း စစ်ဆေးမှု
     if chat_stats["active_drop_code"] and msg.reply_to_message:
         if msg.reply_to_message.message_id == chat_stats["drop_message_id"]:
             entered_code = text.strip().upper()
@@ -167,7 +162,6 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
                     pass
                 return
 
-    # စာကြောင်းရေ ရေတွက်ခြင်း
     if not is_valid_message(text):
         return
 
@@ -177,7 +171,6 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
     chat_stats["count"] += 1
     chat_stats["last_user_id"] = user.id
 
-    # အစောင်ရေ ၁၀၀ ပြည့်လျှင် Drop ချခြင်း
     if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
         chat_stats["count"] = 0
         drop_code = generate_drop_code()
@@ -198,8 +191,79 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
         chat_stats["drop_message_id"] = drop_msg.message_id
 
 # ==========================================================
-# 🛑 Deduct Command
+# 🛑 Commands: Start, Top10, Detail, Backup, Deduct
 # ==========================================================
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    await db.get_or_create_user(user.id, user.username, user.first_name)
+    
+    keyboard = [
+        [InlineKeyboardButton("🎰 ကံစမ်းမဲ လှည့်မည်", callback_data="spin_wheel")],
+        [InlineKeyboardButton("💰 လက်ကျန်ငွေ / Token စစ်မည်", callback_data="check_balance")]
+    ]
+    await update.effective_message.reply_text(
+        f"မင်္ဂလာပါ {user.first_name}!\nLucky Spin Bot မှ ကြိုဆိုပါသည်ခင်ဗျာ။",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+async def top10_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    top_users = await db.get_top_10()
+    if not top_users:
+        await update.effective_message.reply_text("📊 လက်ရှိတွင် ကစားထားသူ စာရင်း မရှိသေးပါ။")
+        return
+
+    text = "🏆 <b>ဘေလ် အများဆုံး Top 10 စာရင်း</b> 🏆\n\n"
+    for idx, row in enumerate(top_users, 1):
+        name, username, coins, tokens = row
+        display_name = f"@{username}" if username else name
+        text += f"{idx}. <b>{display_name}</b> — 💰 {coins} MMK (🎟️ {tokens} ခု)\n"
+
+    await update.effective_message.reply_text(text, parse_mode=ParseMode.HTML)
+
+async def detail_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    msg = update.effective_message
+
+    target_id = user.id
+    target_name = user.first_name
+
+    if msg.reply_to_message:
+        target_id = msg.reply_to_message.from_user.id
+        target_name = msg.reply_to_message.from_user.first_name
+
+    data = await db.get_user_detail(target_id)
+    if not data:
+        await msg.reply_text("❌ User အချက်အလက် ရှာမတွေ့ပါ။")
+        return
+
+    u_data, inv_count = data
+    coins = u_data[3]
+    tokens = u_data[4]
+
+    text = (
+        f"📋 <b>အကောင့် အသေးစိတ် အချက်အလက်</b>\n\n"
+        f"👤 အမည်: <b>{target_name}</b> (<code>{target_id}</code>)\n"
+        f"💰 စုစုပေါင်း ဘေလ်: <b>{coins} MMK</b>\n"
+        f"🎟️ လက်ကျန် Token: <b>{tokens} ခု</b>\n"
+        f"👥 Add ပေးထားသော Member: <b>{inv_count} ယောက်</b>\n"
+    )
+    await msg.reply_text(text, parse_mode=ParseMode.HTML)
+
+async def backup_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    if user.id != OWNER_ID:
+        return
+
+    if os.path.exists(db.DB_NAME):
+        await update.effective_message.reply_document(
+            document=open(db.DB_NAME, "rb"),
+            filename=f"backup_{db.DB_NAME}",
+            caption="✅ <b>Update Database ဖိုင်ကို ပို့ပေးလိုက်ပါပြီ။</b>",
+            parse_mode=ParseMode.HTML
+        )
+    else:
+        await update.effective_message.reply_text("❌ Database ဖိုင် ရှာမတွေ့ပါ။")
+
 async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     msg = update.effective_message
@@ -211,7 +275,7 @@ async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_id = None
     target_name = ""
 
-    # နည်းလမ်း (၁) : စာကို Reply လုပ်ပြီး နှုတ်ခြင်း (/deduct coin 500)
+    # နည်းလမ်း (၁) : Reply ဖြင့် နှုတ်ခြင်း
     if msg.reply_to_message:
         target_user = msg.reply_to_message.from_user
         if target_user.is_bot:
@@ -227,6 +291,7 @@ async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         item_type = args[0].lower()
         amount_str = args[1]
+    # နည်းလမ်း (၂) : ID သို့မဟုတ် Username ဖြင့် နှုတ်ခြင်း
     else:
         if len(args) < 3:
             await msg.reply_text("⚠️ <b>အသုံးပြုပုံ:</b>\n<code>/deduct &lt;ID/@username&gt; &lt;coin/token&gt; &lt;ပမာဏ&gt;</code>", parse_mode=ParseMode.HTML)
@@ -261,21 +326,8 @@ async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await msg.reply_text("❌ <code>coin</code> သို့မဟုတ် <code>token</code> ဟု ရွေးချယ်ပေးပါ။", parse_mode=ParseMode.HTML)
 
 # ==========================================================
-# 🎰 Spin & Balance Buttons
+# 🎰 Callback Query (Buttons)
 # ==========================================================
-async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-    await db.get_or_create_user(user.id, user.username, user.first_name)
-    
-    keyboard = [
-        [InlineKeyboardButton("🎰 ကံစမ်းမဲ လှည့်မည်", callback_data="spin_wheel")],
-        [InlineKeyboardButton("💰 လက်ကျန်ငွေ / Token စစ်မည်", callback_data="check_balance")]
-    ]
-    await update.effective_message.reply_text(
-        f"မင်္ဂလာပါ {user.first_name}!\nLucky Spin Bot မှ ကြိုဆိုပါသည်ခင်ဗျာ။",
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
-
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -321,17 +373,17 @@ async def run_bot():
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Commands အားလုံး Register ပြုလုပ်ခြင်း
     app.add_handler(CommandHandler("start", start_command))
+    app.add_handler(CommandHandler("top10", top10_command))
+    app.add_handler(CommandHandler("detail", detail_command))
+    app.add_handler(CommandHandler("backup", backup_command))
     app.add_handler(CommandHandler("deduct", deduct_command))
+
     app.add_handler(CallbackQueryHandler(handle_callback_query))
-    
-    # လူ Add လျှင် ဖမ်းယူမည့် Handler
     app.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_members))
-    
-    # General Chat စာကြောင်းရေ စစ်ဆေးမည့် Handler
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_general_chat))
 
-    # Render Port Binding အတွက် Dummy Server ဖွင့်လှစ်ခြင်း
     await start_dummy_server()
 
     print("🤖 Bot is starting polling...")
@@ -342,4 +394,3 @@ async def run_bot():
 
 if __name__ == "__main__":
     asyncio.run(run_bot())
-    
