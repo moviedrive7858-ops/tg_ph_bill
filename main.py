@@ -16,15 +16,14 @@ from aiogram.fsm.storage.memory import MemoryStorage
 import database as db
 
 # ==========================================================
-# ⚙️ Render Environment Variables မှ လျှို့ဝှက်တန်ဖိုးများ ဆွဲယူခြင်း
+# ⚙️ Settings & Credentials
 # ==========================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 SPIN_GROUP_ID = int(os.environ.get("SPIN_GROUP_ID", 0))      # Main Group ID (-1002672484902)
-SPIN_TOPIC_ID = int(os.environ.get("SPIN_TOPIC_ID", 0))      # Lucky Spin Topic ID
-ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))  # Private Admin Group ID
+SPIN_TOPIC_ID = int(os.environ.get("SPIN_TOPIC_ID", 0))      # Spin Topic ID
+ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))  # Optional: Admin Group ID
 
-# 📌 General Topic သတ်မှတ်ချက် (Telegram link အရ thread_id = 1 ဖြစ်သည်)
 GENERAL_TOPIC_ID = 1
 
 if not BOT_TOKEN:
@@ -49,7 +48,6 @@ chat_stats = {
 }
 
 def generate_drop_code() -> str:
-    """English စာလုံးကြီး ၃ လုံး + နံပါတ် ၂ လုံး ကျပန်းရောမွှေထုတ်ပေးခြင်း"""
     letters = random.choices(string.ascii_uppercase, k=3)
     digits = random.choices(string.digits, k=2)
     combined = letters + digits
@@ -57,10 +55,9 @@ def generate_drop_code() -> str:
     return "".join(combined)
 
 def is_valid_chat_message(text: str) -> bool:
+    """မြန်မာစာနှင့် English စာ နှစ်မျိုးစလုံး အဆင်ပြေစေမည့် Filter"""
     clean_text = text.strip()
-    if len(clean_text) < 5:
-        return False
-    if len(clean_text.split()) < 2:
+    if len(clean_text) < 3:
         return False
     if clean_text.isdigit():
         return False
@@ -73,7 +70,7 @@ class RedeemState(StatesGroup):
     waiting_for_phone = State()
 
 # ==========================================================
-# 🌐 UptimeRobot အတွက် Health Check Web Server
+# 🌐 Render Dummy Server (Port 8080)
 # ==========================================================
 async def health_check(request):
     return web.Response(text="Bot is running active!")
@@ -103,10 +100,10 @@ async def auto_backup_task():
                     caption=f"📦 Daily Database Backup ({today})\n\nစနစ်ပျက်စီးခဲ့ပါက ဤဖိုင်ကို ပြန်လည်အသုံးပြုနိုင်ပါသည်။"
                 )
         except Exception as e:
-            print(f"Backup Error: {e}")
+            print(f"Auto Backup Error: {e}")
 
 # ==========================================================
-# 👥 Contact မှတစ်ဆင့် Add Member စစ်ဆေးခြင်း
+# 👥 Member Add စစ်ဆေးခြင်း
 # ==========================================================
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(LEFT | KICKED | RESTRICTED) >> (MEMBER | ADMINISTRATOR | CREATOR)))
 async def on_user_join(event: ChatMemberUpdated):
@@ -319,7 +316,7 @@ async def handle_spin(callback: types.CallbackQuery):
     except Exception:
         pass
 
-# --- Pending စာရင်း ကြည့်ရှုသည့် Callback ---
+# --- Pending Callback ---
 @dp.callback_query(lambda c: c.data.startswith("pending_"))
 async def handle_pending_btn(callback: types.CallbackQuery):
     orig_user_id = int(callback.data.split("_")[1])
@@ -338,7 +335,7 @@ async def handle_pending_btn(callback: types.CallbackQuery):
     
     await callback.answer(text, show_alert=True)
 
-# --- /bill Command (Private Chat တွင် ဘေလ်တောင်းယူခြင်း) ---
+# --- /bill Command ---
 @dp.message(Command("bill"))
 @dp.message(Command("start"), F.text.startswith("/start bill"))
 async def bill_cmd(message: types.Message, state: FSMContext):
@@ -387,7 +384,10 @@ async def submit_phone(message: types.Message, state: FSMContext):
             f"အခြေအနေ: ⏳ Pending\n"
             f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
-        await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log, reply_markup=admin_kb)
+        try:
+            await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log, reply_markup=admin_kb)
+        except Exception:
+            pass
 
     await message.reply("တောင်းဆိုမှု အောင်မြင်ပါသည်။ Admin မှ စစ်ဆေး၍ ဖုန်းဘေလ် ဖြည့်ပေးပါလိမ့်မည်။")
     await state.clear()
@@ -443,7 +443,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         pass
 
 # ==========================================================
-# 👑 Owner Commands (/top10, /detail, /backup, /restore, /givebill, /givetoken, /deduct)
+# 👑 Owner Commands
 # ==========================================================
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
@@ -494,6 +494,7 @@ async def cmd_detail(message: types.Message):
         f"👥 Add ခဲ့သူ: **{inv_count} ယောက်**"
     )
 
+# 💾 Backup Command: ရိုက်သည့်နေရာ (Private ဖြစ်စေ၊ Admin Group ဖြစ်စေ) သို့ .db ဖိုင် တိုက်ရိုက် ပို့ပေးသည်
 @dp.message(Command("backup"))
 async def cmd_manual_backup(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -501,21 +502,31 @@ async def cmd_manual_backup(message: types.Message):
     if not os.path.exists(db.DB_NAME):
         await message.reply("❌ Database ဖိုင် မရှိသေးပါ။")
         return
-    if ADMIN_LOG_GROUP_ID == 0:
-        await message.reply("❌ ADMIN_LOG_GROUP_ID သတ်မှတ်မထားပါ။")
-        return
 
+    status_msg = await message.reply("⏳ Database ဖိုင်ကို ထုတ်ယူနေပါသည်...")
     try:
         now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         backup_file = FSInputFile(db.DB_NAME, filename=f"backup_manual_{now_str}.db")
-        await bot.send_document(
-            chat_id=ADMIN_LOG_GROUP_ID,
+        
+        # Command ရိုက်သည့်နေရာသို့ တိုက်ရိုက် Reply ပြန်ပို့ခြင်း
+        await message.reply_document(
             document=backup_file,
             caption=f"📦 **Update Database Backup**\n\n📅 အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n👤 ထုတ်ယူသူ: Owner"
         )
-        await message.reply("✅ Update Database ဖိုင်ကို Admin Group ထံသို့ ပို့ပေးလိုက်ပါပြီ။")
+        await status_msg.delete()
+
+        # Admin Log Group ရှိပါက ထိုနေရာသို့ပါ အပိုမိတ္တူ လှမ်းပို့ပေးခြင်း
+        if ADMIN_LOG_GROUP_ID != 0 and message.chat.id != ADMIN_LOG_GROUP_ID:
+            try:
+                await bot.send_document(
+                    chat_id=ADMIN_LOG_GROUP_ID,
+                    document=backup_file,
+                    caption=f"📦 **Update Database Backup (Auto-Log)**\n\n📅 အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+            except Exception:
+                pass
     except Exception as e:
-        await message.reply(f"❌ Backup Error: {e}")
+        await status_msg.edit_text(f"❌ Backup Error: {e}")
 
 @dp.message(Command("restore"))
 async def cmd_restore(message: types.Message):
@@ -680,7 +691,6 @@ async def cmd_deduct(message: types.Message):
 # ==========================================================
 @dp.message(F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
-    # Main Group မဟုတ်ပါက ကျော်မည်
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
         return
 
@@ -690,10 +700,9 @@ async def handle_chat_activity(message: types.Message):
     if SPIN_TOPIC_ID != 0 and msg_topic_id == SPIN_TOPIC_ID:
         return
 
-    # 📌 General Topic (thread_id = 1 သို့မဟုတ် Main Thread None) မဟုတ်ပါက Count မလုပ်ပါ
-    if GENERAL_TOPIC_ID is not None:
-        if msg_topic_id not in [GENERAL_TOPIC_ID, 1, None]:
-            return
+    # General Topic စစ်ဆေးမှု (1 သို့မဟုတ် Main Thread None အားလုံးကို လက်ခံသည်)
+    if msg_topic_id not in [GENERAL_TOPIC_ID, 1, None]:
+        return
 
     user = message.from_user
     if not user or user.is_bot:
@@ -701,9 +710,7 @@ async def handle_chat_activity(message: types.Message):
 
     text = message.text or ""
 
-    # ------------------------------------------------------
-    # 🎯 အပိုင်း (က) : Drop Code ကို Reply လုပ်၍ အရင်ဆုံး လုယူခြင်း
-    # ------------------------------------------------------
+    # Drop Code Reply စစ်ဆေးခြင်း
     if chat_stats["active_drop_code"] and message.reply_to_message:
         if message.reply_to_message.message_id == chat_stats["drop_message_id"]:
             entered_code = text.strip().upper()
@@ -719,7 +726,6 @@ async def handle_chat_activity(message: types.Message):
 
                 winner_mention = f"@{user.username}" if user.username else f"[{user.first_name}](tg://user?id={user.id})"
 
-                # General Topic ထဲသို့ ကြေငြာချက် ပို့ပေးခြင်း
                 await bot.send_message(
                     chat_id=message.chat.id,
                     message_thread_id=msg_topic_id,
@@ -748,22 +754,19 @@ async def handle_chat_activity(message: types.Message):
                     pass
                 return
 
-    # ------------------------------------------------------
-    # 📊 အပိုင်း (ခ) : စာကြောင်းရေ စစ်ဆေးခြင်း
-    # ------------------------------------------------------
     if not is_valid_chat_message(text):
         return
 
-    # လူတစ်ယောက်တည်း ဆက်တိုက်ပို့ခြင်းကို မရေတွက်ပါ
+    # လူတစ်ယောက်တည်း ဆက်တိုက်ပို့ခြင်း မဟုတ်ပါက Count တိုးမည်
     if chat_stats["last_user_id"] == user.id:
         return
 
     chat_stats["count"] += 1
     chat_stats["last_user_id"] = user.id
 
-    # ------------------------------------------------------
-    # 🎁 အပိုင်း (ဂ) : စာကြောင်းရေ ၁၀၀ ပြည့်ပါက Drop ချပေးခြင်း
-    # ------------------------------------------------------
+    # Render Logs ထဲတွင် Count တက်နေမှုကို အချိန်နှင့်တပြေးညီ ကြည့်နိုင်ရန်
+    print(f"📊 Chat Count: {chat_stats['count']}/{MESSAGE_TARGET} | User: {user.first_name} | Text: {text[:15]}")
+
     if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
         chat_stats["count"] = 0
         drop_code = generate_drop_code()
@@ -773,7 +776,7 @@ async def handle_chat_activity(message: types.Message):
             chat_id=message.chat.id,
             message_thread_id=msg_topic_id,
             text=(
-                f"🎉 **စကားဝိုင်း အစောင်ရေ ၁၀၀ ပြည့်ပါပြီ!**\n\n"
+                f"🎉 **စကားဝိုင်း အစောင်ရေ {MESSAGE_TARGET} ပြည့်ပါပြီ!**\n\n"
                 f"🎟️ **Free Spin Token ကောက်ယူရန်:**\n"
                 f"ဤမက်ဆေ့ခ်ျအား **Reply** လုပ်ပြီး အောက်ပါ Code အား အမြန်ဆုံး ရိုက်ထည့်ပါ-\n\n"
                 f"👉 👉 👉  `{drop_code}`  👈 👈 👈\n\n"
