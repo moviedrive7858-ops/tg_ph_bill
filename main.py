@@ -20,9 +20,12 @@ import database as db
 # ==========================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
-SPIN_GROUP_ID = int(os.environ.get("SPIN_GROUP_ID", 0))      # Main Group ID
-SPIN_TOPIC_ID = int(os.environ.get("SPIN_TOPIC_ID", 0))      # Topic ID
+SPIN_GROUP_ID = int(os.environ.get("SPIN_GROUP_ID", 0))      # Main Group ID (-1002672484902)
+SPIN_TOPIC_ID = int(os.environ.get("SPIN_TOPIC_ID", 0))      # Lucky Spin Topic ID
 ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))  # Private Admin Group ID
+
+# 📌 General Topic သတ်မှတ်ချက် (Telegram link အရ thread_id = 1 ဖြစ်သည်)
+GENERAL_TOPIC_ID = 1
 
 if not BOT_TOKEN:
     raise ValueError("ERROR: Render Environment Variables တွင် BOT_TOKEN မသတ်မှတ်ရသေးပါ။")
@@ -46,6 +49,7 @@ chat_stats = {
 }
 
 def generate_drop_code() -> str:
+    """English စာလုံးကြီး ၃ လုံး + နံပါတ် ၂ လုံး ကျပန်းရောမွှေထုတ်ပေးခြင်း"""
     letters = random.choices(string.ascii_uppercase, k=3)
     digits = random.choices(string.digits, k=2)
     combined = letters + digits
@@ -439,7 +443,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         pass
 
 # ==========================================================
-# 👑 Owner Commands
+# 👑 Owner Commands (/top10, /detail, /backup, /restore, /givebill, /givetoken, /deduct)
 # ==========================================================
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
@@ -676,9 +680,20 @@ async def cmd_deduct(message: types.Message):
 # ==========================================================
 @dp.message(F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
-    # Spin Topic ထဲက စာဆိုလျှင် Chat Drop စာရင်းထဲ မထည့်ပါ
-    if SPIN_TOPIC_ID != 0 and message.message_thread_id == SPIN_TOPIC_ID:
+    # Main Group မဟုတ်ပါက ကျော်မည်
+    if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
         return
+
+    msg_topic_id = message.message_thread_id
+
+    # Spin Topic ထဲက စာဆိုလျှင် Chat Drop စာရင်းထဲ မထည့်ပါ
+    if SPIN_TOPIC_ID != 0 and msg_topic_id == SPIN_TOPIC_ID:
+        return
+
+    # 📌 General Topic (thread_id = 1 သို့မဟုတ် Main Thread None) မဟုတ်ပါက Count မလုပ်ပါ
+    if GENERAL_TOPIC_ID is not None:
+        if msg_topic_id not in [GENERAL_TOPIC_ID, 1, None]:
+            return
 
     user = message.from_user
     if not user or user.is_bot:
@@ -696,7 +711,6 @@ async def handle_chat_activity(message: types.Message):
                 target_code = chat_stats["active_drop_code"]
                 drop_msg_id = chat_stats["drop_message_id"]
 
-                # နောက်ထပ် လူများ မလုနိုင်စေရန် ချက်ချင်း ပိတ်သိမ်းခြင်း
                 chat_stats["active_drop_code"] = None
                 chat_stats["drop_message_id"] = None
 
@@ -705,10 +719,10 @@ async def handle_chat_activity(message: types.Message):
 
                 winner_mention = f"@{user.username}" if user.username else f"[{user.first_name}](tg://user?id={user.id})"
 
-                # General ထဲ ကြေငြာပေးခြင်း
+                # General Topic ထဲသို့ ကြေငြာချက် ပို့ပေးခြင်း
                 await bot.send_message(
                     chat_id=message.chat.id,
-                    message_thread_id=message.message_thread_id,
+                    message_thread_id=msg_topic_id,
                     text=(
                         f"⚡ **အမြန်ဆုံး ကောက်ယူသွားပါပြီ!**\n\n"
                         f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Code `[{target_code}]` အား အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
@@ -757,7 +771,7 @@ async def handle_chat_activity(message: types.Message):
 
         drop_msg = await bot.send_message(
             chat_id=message.chat.id,
-            message_thread_id=message.message_thread_id,
+            message_thread_id=msg_topic_id,
             text=(
                 f"🎉 **စကားဝိုင်း အစောင်ရေ ၁၀၀ ပြည့်ပါပြီ!**\n\n"
                 f"🎟️ **Free Spin Token ကောက်ယူရန်:**\n"
