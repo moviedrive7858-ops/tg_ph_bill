@@ -44,15 +44,35 @@ chat_stats = {
     "count": 0,
     "last_user_id": None,
     "active_drop_code": None,
+    "drop_type": None,          # "token", "bill_50", "bill_100"
     "drop_message_id": None
 }
 
 def generate_drop_code() -> str:
+    """English စာလုံးကြီး ၃ လုံး + နံပါတ် ၂ လုံး ကျပန်းရောမွှေထုတ်ပေးခြင်း"""
     letters = random.choices(string.ascii_uppercase, k=3)
     digits = random.choices(string.digits, k=2)
     combined = letters + digits
     random.shuffle(combined)
     return "".join(combined)
+
+def get_random_drop_reward() -> tuple:
+    """
+    Drop အမျိုးအစား ကျပန်း ရွေးချယ်ခြင်း (65% / 25% / 10% အချိုးအစား):
+    - Token: 65% (အဓိကအများဆုံး)
+    - 50 Bill: 25% (မကြာခဏ)
+    - 100 Bill: 10% (ရှားပါးဆု)
+    """
+    reward_types = ["token", "bill_50", "bill_100"]
+    reward_weights = [65.0, 25.0, 10.0]
+    chosen = random.choices(reward_types, weights=reward_weights, k=1)[0]
+    
+    if chosen == "token":
+        return "token", "Lucky Token", "🎟️ Spin Token ၁ ခု"
+    elif chosen == "bill_50":
+        return "bill_50", "Lucky Bill (50 MMK)", "💰 ၅၀ ကျပ် ဖုန်းဘေလ်"
+    else:
+        return "bill_100", "Lucky Bill (100 MMK)", "💎 ၁၀၀ ကျပ် ဖုန်းဘေလ်"
 
 def is_valid_chat_message(text: str) -> bool:
     clean_text = text.strip()
@@ -102,7 +122,7 @@ async def auto_backup_task():
             print(f"Auto Backup Error: {e}")
 
 # ==========================================================
-# 👥 Member Add စစ်ဆေးခြင်း (Race Condition အမှား မတက်စေရန် ပြင်ဆင်ပြီး)
+# 👥 Member Add စစ်ဆေးခြင်း
 # ==========================================================
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(LEFT | KICKED | RESTRICTED) >> (MEMBER | ADMINISTRATOR | CREATOR)))
 async def on_user_join(event: ChatMemberUpdated):
@@ -125,7 +145,6 @@ async def new_member_message_handler(message: types.Message):
     if not inviter or inviter.is_bot:
         return
 
-    # Loop မပတ်မီ ဖိတ်ခေါ်သူအား အရင် ၁ ကြိမ်သာ Register လုပ်မည်
     await db.get_or_create_user(inviter.id, inviter.username, inviter.first_name)
 
     for new_member in message.new_chat_members:
@@ -722,7 +741,7 @@ async def cmd_deduct(message: types.Message):
         await message.reply("❌ `coin` သို့မဟုတ် `token` ဟု ရွေးချယ်ပေးပါ။", parse_mode="Markdown")
 
 # ==========================================================
-# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
+# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ် (65/25/10%)
 # ==========================================================
 @dp.message(F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
@@ -745,39 +764,58 @@ async def handle_chat_activity(message: types.Message):
 
     text = message.text or ""
 
-    # Drop Code Reply စစ်ဆေးခြင်း
+    # ------------------------------------------------------
+    # 🎯 အပိုင်း (က) : Drop Code ကို Reply လုပ်၍ အရင်ဆုံး လုယူခြင်း
+    # ------------------------------------------------------
     if chat_stats["active_drop_code"] and message.reply_to_message:
         if message.reply_to_message.message_id == chat_stats["drop_message_id"]:
             entered_code = text.strip().upper()
             if entered_code == chat_stats["active_drop_code"]:
                 target_code = chat_stats["active_drop_code"]
+                drop_type = chat_stats["drop_type"]
                 drop_msg_id = chat_stats["drop_message_id"]
 
                 chat_stats["active_drop_code"] = None
+                chat_stats["drop_type"] = None
                 chat_stats["drop_message_id"] = None
 
                 await db.get_or_create_user(user.id, user.username, user.first_name)
-                total_tokens = await db.add_tokens(user.id, 1)
-
                 winner_mention = f"@{user.username}" if user.username else f"[{user.first_name}](tg://user?id={user.id})"
+
+                # ရရှိသော ဆုအမျိုးအစားအလိုက် အကောင့်ထဲ ထည့်ပေးခြင်း
+                if drop_type == "token":
+                    total = await db.add_tokens(user.id, 1)
+                    reward_text = "🎟️ **Free Spin Token ၁ ခု**"
+                    balance_text = f"👉 လက်ကျန် Token: **{total} ခု**\n*(Spin Topic တွင် သွားရောက် ကံစမ်းနိုင်ပါပြီ)*"
+                elif drop_type == "bill_50":
+                    total = await db.add_coins(user.id, 50)
+                    reward_text = "💰 **၅၀ ကျပ် ဖုန်းဘေလ်**"
+                    balance_text = f"👉 လက်ကျန် Bill: **{total} ကျပ်**"
+                else:  # bill_100
+                    total = await db.add_coins(user.id, 100)
+                    reward_text = "💎 **၁၀၀ ကျပ် ဖုန်းဘေလ်**"
+                    balance_text = f"👉 လက်ကျန် Bill: **{total} ကျပ်**"
 
                 await bot.send_message(
                     chat_id=message.chat.id,
                     message_thread_id=msg_topic_id,
-                    text=(      
-                        f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Code အား အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
-                        f"🎟️ **Free Spin Token ၁ ခု** ရရှိသွားပါပြီ!\n\n"
+                    text=(
+                        f"⚡ **အမြန်ဆုံး ကောက်ယူသွားပါပြီ!**\n\n"
+                        f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Code `[{target_code}]` အား အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
+                        f"{reward_text} ရရှိသွားပါပြီ!\n\n"
+                        f"{balance_text}"
                     ),
                     parse_mode="Markdown"
                 )
 
+                # မူရင်း Drop စာကို Edit ပြုလုပ်ပေးခြင်း
                 try:
                     await bot.edit_message_text(
                         chat_id=message.chat.id,
                         message_id=drop_msg_id,
                         text=(
-                            f"🎁 **လက်ဆောင် Token အား ကောက်ယူပြီးစီးသွားပါပြီ!**\n\n"
-                            f"🏆 ကံထူးရှင်: {winner_mention}\n"
+                            f"🎁 **Claimed by {winner_mention}!**\n"
+                            f"🏆 ဆု: {reward_text}\n"
                             f"🔑 Code: `{target_code}`"
                         ),
                         parse_mode="Markdown"
@@ -786,6 +824,9 @@ async def handle_chat_activity(message: types.Message):
                     pass
                 return
 
+    # ------------------------------------------------------
+    # 📊 အပိုင်း (ခ) : စာကြောင်းရေ စစ်ဆေးခြင်း
+    # ------------------------------------------------------
     if not is_valid_chat_message(text):
         return
 
@@ -795,22 +836,24 @@ async def handle_chat_activity(message: types.Message):
     chat_stats["count"] += 1
     chat_stats["last_user_id"] = user.id
 
-    print(f"📊 Chat Count: {chat_stats['count']}/{MESSAGE_TARGET} | User: {user.first_name} | Text: {text[:15]}")
+    print(f"📊 Chat Count: {chat_stats['count']}/{MESSAGE_TARGET} | User: {user.first_name}")
 
+    # ------------------------------------------------------
+    # 🎁 အပိုင်း (ဂ) : စာကြောင်းရေ ၁၀၀ ပြည့်ပါက Drop ချပေးခြင်း
+    # ------------------------------------------------------
     if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
         chat_stats["count"] = 0
         drop_code = generate_drop_code()
-        chat_stats["active_drop_code"] = drop_code
+        d_type, d_label, _ = get_random_drop_reward()
 
+        chat_stats["active_drop_code"] = drop_code
+        chat_stats["drop_type"] = d_type
+
+        # 📌 စာသားပုံစံဖြင့် သန့်ရှင်းစွာ ချပေးခြင်း
         drop_msg = await bot.send_message(
             chat_id=message.chat.id,
             message_thread_id=msg_topic_id,
-            text=(
-                f"🎟️ **Free Spin Token ကောက်ယူရန်:**\n"
-                f"ဤမက်ဆေ့ခ်ျအား **Reply** လုပ်ပြီး အောက်ပါ Code အား အမြန်ဆုံး ရိုက်ထည့်ပါ-\n\n"
-                f"👉 👉 👉  `{drop_code}`  👈 👈 👈\n\n"
-                f"*(အရင်ဆုံး အတိအကျ Reply ရိုက်ထည့်သူ ၁ ဦးသာ ရရှိပါမည်)*"
-            ),
+            text=f"🎁 **{d_label} Code :** `{drop_code}`",
             parse_mode="Markdown"
         )
         chat_stats["drop_message_id"] = drop_msg.message_id
