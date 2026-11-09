@@ -44,8 +44,9 @@ chat_stats = {
     "count": 0,
     "last_user_id": None,
     "active_drop_code": None,
-    "drop_type": None,          # "token", "bill_50", "bill_100"
-    "drop_message_id": None
+    "drop_type": None,              # "token", "bill_50", "bill_100"
+    "drop_message_id": None,
+    "claimed_drop_msg_id": None     # ကောက်ပြီးသား မက်ဆေ့ခ်ျ ID ကို မှတ်သားရန်
 }
 
 def generate_drop_code() -> str:
@@ -59,20 +60,20 @@ def generate_drop_code() -> str:
 def get_random_drop_reward() -> tuple:
     """
     Drop အမျိုးအစား ကျပန်း ရွေးချယ်ခြင်း (65% / 25% / 10% အချိုးအစား):
-    - Token: 65% (အဓိကအများဆုံး)
-    - 50 Bill: 25% (မကြာခဏ)
-    - 100 Bill: 10% (ရှားပါးဆု)
+    - Token: 65%
+    - 50 Bill: 25%
+    - 100 Bill: 10%
     """
     reward_types = ["token", "bill_50", "bill_100"]
     reward_weights = [65.0, 25.0, 10.0]
     chosen = random.choices(reward_types, weights=reward_weights, k=1)[0]
     
     if chosen == "token":
-        return "token", "Lucky Token", "🎟️ Spin Token ၁ ခု"
+        return "token", "🎟️ Free Spin Token ၁ ခု"
     elif chosen == "bill_50":
-        return "bill_50", "Lucky Bill (50 MMK)", "💰 ၅၀ ကျပ် ဖုန်းဘေလ်"
+        return "bill_50", "💰 ဖုန်းဘေလ် ၅၀ ကျပ်"
     else:
-        return "bill_100", "Lucky Bill (100 MMK)", "💎 ၁၀၀ ကျပ် ဖုန်းဘေလ်"
+        return "bill_100", "💎 ဖုန်းဘေလ် ၁၀၀ ကျပ်"
 
 def is_valid_chat_message(text: str) -> bool:
     clean_text = text.strip()
@@ -517,7 +518,6 @@ async def cmd_detail(message: types.Message):
         f"👥 Add ခဲ့သူ: **{inv_count} ယောက်**"
     )
 
-# 💾 Backup Command: ရိုက်သည့်နေရာ (Private/Admin Group) သို့ တိုက်ရိုက် Reply ပြန်ပို့သည်
 @dp.message(Command("backup"))
 async def cmd_manual_backup(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -570,9 +570,6 @@ async def cmd_restore(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
-# ==========================================================
-# 🎁 Givebill Fixed
-# ==========================================================
 @dp.message(Command("givebill"))
 async def cmd_givebill(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -617,9 +614,6 @@ async def cmd_givebill(message: types.Message):
     new_c = await db.add_coins(target_id, amount)
     await message.reply(f"🎁 **{target_name}** (`{target_id}`) သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: **{new_c}** ကျပ်)")
 
-# ==========================================================
-# 🎟️ Givetoken Fixed
-# ==========================================================
 @dp.message(Command("givetoken"))
 async def cmd_givetoken(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -664,9 +658,6 @@ async def cmd_givetoken(message: types.Message):
     new_t = await db.add_tokens(target_id, amount)
     await message.reply(f"🎟️ **{target_name}** (`{target_id}`) သို့ +{amount} Spin Token ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: **{new_t}** ကြိမ်)")
 
-# ==========================================================
-# 🛑 Deduct Command Fixed
-# ==========================================================
 @dp.message(Command("deduct"))
 async def cmd_deduct(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -741,7 +732,7 @@ async def cmd_deduct(message: types.Message):
         await message.reply("❌ `coin` သို့မဟုတ် `token` ဟု ရွေးချယ်ပေးပါ။", parse_mode="Markdown")
 
 # ==========================================================
-# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ် (65/25/10%)
+# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
 # ==========================================================
 @dp.message(F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
@@ -765,64 +756,72 @@ async def handle_chat_activity(message: types.Message):
     text = message.text or ""
 
     # ------------------------------------------------------
-    # 🎯 အပိုင်း (က) : Drop Code ကို Reply လုပ်၍ အရင်ဆုံး လုယူခြင်း
+    # 🎯 အပိုင်း (က) : Drop Code ကို Reply လုပ်၍ လုယူခြင်း & ထပ်ကောက်သူများအား ပယ်ဖျက်ခြင်း
     # ------------------------------------------------------
-    if chat_stats["active_drop_code"] and message.reply_to_message:
-        if message.reply_to_message.message_id == chat_stats["drop_message_id"]:
+    if message.reply_to_message:
+        replied_msg_id = message.reply_to_message.message_id
+
+        # ၁။ လက်ရှိ ဖွင့်ထားဆဲ Drop Code အား အမြန်ဆုံး အတိအကျ ကောက်ယူခြင်း
+        if chat_stats["active_drop_code"] and replied_msg_id == chat_stats["drop_message_id"]:
             entered_code = text.strip().upper()
             if entered_code == chat_stats["active_drop_code"]:
                 target_code = chat_stats["active_drop_code"]
                 drop_type = chat_stats["drop_type"]
                 drop_msg_id = chat_stats["drop_message_id"]
 
+                # Code အား အသုံးပြုပြီးကြောင်း သတ်မှတ်ခြင်း
                 chat_stats["active_drop_code"] = None
                 chat_stats["drop_type"] = None
                 chat_stats["drop_message_id"] = None
+                chat_stats["claimed_drop_msg_id"] = drop_msg_id
 
                 await db.get_or_create_user(user.id, user.username, user.first_name)
                 winner_mention = f"@{user.username}" if user.username else f"[{user.first_name}](tg://user?id={user.id})"
 
-                # ရရှိသော ဆုအမျိုးအစားအလိုက် အကောင့်ထဲ ထည့်ပေးခြင်း
                 if drop_type == "token":
-                    total = await db.add_tokens(user.id, 1)
-                    reward_text = "🎟️ **Free Spin Token ၁ ခု**"
-                    balance_text = f"👉 လက်ကျန် Token: **{total} ခု**\n*(Spin Topic တွင် သွားရောက် ကံစမ်းနိုင်ပါပြီ)*"
+                    await db.add_tokens(user.id, 1)
+                    reward_text = "🎟️ Free Spin Token ၁ ခု"
                 elif drop_type == "bill_50":
-                    total = await db.add_coins(user.id, 50)
-                    reward_text = "💰 **၅၀ ကျပ် ဖုန်းဘေလ်**"
-                    balance_text = f"👉 လက်ကျန် Bill: **{total} ကျပ်**"
+                    await db.add_coins(user.id, 50)
+                    reward_text = "💰 ဖုန်းဘေလ် ၅၀ ကျပ်"
                 else:  # bill_100
-                    total = await db.add_coins(user.id, 100)
-                    reward_text = "💎 **၁၀၀ ကျပ် ဖုန်းဘေလ်**"
-                    balance_text = f"👉 လက်ကျန် Bill: **{total} ကျပ်**"
+                    await db.add_coins(user.id, 100)
+                    reward_text = "💎 ဖုန်းဘေလ် ၁၀၀ ကျပ်"
+
+                # ကံထူးရှင်အတွက် တောင်းဆိုထားသည့် Format အတိုင်း တိုက်ရိုက် ပို့ပေးခြင်း
+                congrats_text = (
+                    f"🎁 **Claimed by {winner_mention}!**\n"
+                    f"🏆 ဆု: **{reward_text}**\n"
+                    f"🔑 Code: `{target_code}`"
+                )
 
                 await bot.send_message(
                     chat_id=message.chat.id,
                     message_thread_id=msg_topic_id,
-                    text=(
-                        f"⚡ **အမြန်ဆုံး ကောက်ယူသွားပါပြီ!**\n\n"
-                        f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Code `[{target_code}]` အား အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
-                        f"{reward_text} ရရှိသွားပါပြီ!\n\n"
-                        f"{balance_text}"
-                    ),
+                    text=congrats_text,
                     parse_mode="Markdown"
                 )
 
-                # မူရင်း Drop စာကို Edit ပြုလုပ်ပေးခြင်း
+                # မူရင်း Drop စာကိုလည်း Claimed ဖြစ်ကြောင်း ပြောင်းလဲခြင်း
                 try:
                     await bot.edit_message_text(
                         chat_id=message.chat.id,
                         message_id=drop_msg_id,
-                        text=(
-                            f"🎁 **Claimed by {winner_mention}!**\n"
-                            f"🏆 ဆု: {reward_text}\n"
-                            f"🔑 Code: `{target_code}`"
-                        ),
+                        text=congrats_text,
                         parse_mode="Markdown"
                     )
                 except Exception:
                     pass
                 return
+
+        # ၂။ ကောက်ယူပြီးသား မက်ဆေ့ခ်ျအား နောက်လူများ ထပ်မံ Reply လုပ်ပါက အသိပေးခြင်း
+        elif chat_stats["claimed_drop_msg_id"] and replied_msg_id == chat_stats["claimed_drop_msg_id"]:
+            await message.reply(
+                "❌ **ယခုကုတ်သည် ရယူပြီးသားဖြစ်ပါသည်။**\n"
+                "နောက်ထပ်ကုတ်များရယူရန် GP ထဲစကားဝင်ပြောပါ။",
+                parse_mode="Markdown"
+            )
+            return
 
     # ------------------------------------------------------
     # 📊 အပိုင်း (ခ) : စာကြောင်းရေ စစ်ဆေးခြင်း
@@ -844,16 +843,16 @@ async def handle_chat_activity(message: types.Message):
     if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
         chat_stats["count"] = 0
         drop_code = generate_drop_code()
-        d_type, d_label, _ = get_random_drop_reward()
+        d_type, _ = get_random_drop_reward()
 
         chat_stats["active_drop_code"] = drop_code
         chat_stats["drop_type"] = d_type
 
-        # 📌 စာသားပုံစံဖြင့် သန့်ရှင်းစွာ ချပေးခြင်း
+        # 📌 ဆုအမျိုးအစားကို မဖော်ပြဘဲ Lucky Code အဖြစ်သာ ချပေးခြင်း
         drop_msg = await bot.send_message(
             chat_id=message.chat.id,
             message_thread_id=msg_topic_id,
-            text=f"🎁 **{d_label} Code :** `{drop_code}`",
+            text=f"🎁 **Lucky Code :** `{drop_code}`",
             parse_mode="Markdown"
         )
         chat_stats["drop_message_id"] = drop_msg.message_id
