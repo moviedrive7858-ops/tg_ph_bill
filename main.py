@@ -764,12 +764,9 @@ async def handle_chat_activity(message: types.Message):
                 await bot.send_message(
                     chat_id=message.chat.id,
                     message_thread_id=msg_topic_id,
-                    text=(
-                        f"⚡ **အမြန်ဆုံး ကောက်ယူသွားပါပြီ!**\n\n"
-                        f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Code `[{target_code}]` အား အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
+                    text=(      
+                        f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Code အား အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
                         f"🎟️ **Free Spin Token ၁ ခု** ရရှိသွားပါပြီ!\n\n"
-                        f"👉 {winner_mention} ၏ လက်ကျန် Token: **{total_tokens} ခု**\n"
-                        f"*(Spin Topic တွင် သွားရောက် ကံစမ်းနိုင်ပါပြီ)*"
                     ),
                     parse_mode="Markdown"
                 )
@@ -779,7 +776,7 @@ async def handle_chat_activity(message: types.Message):
                         chat_id=message.chat.id,
                         message_id=drop_msg_id,
                         text=(
-                            f"🎁 **Token Drop ကောက်ယူပြီးစီးသွားပါပြီ!**\n\n"
+                            f"🎁 **လက်ဆောင် Token အား ကောက်ယူပြီးစီးသွားပါပြီ!**\n\n"
                             f"🏆 ကံထူးရှင်: {winner_mention}\n"
                             f"🔑 Code: `{target_code}`"
                         ),
@@ -809,7 +806,6 @@ async def handle_chat_activity(message: types.Message):
             chat_id=message.chat.id,
             message_thread_id=msg_topic_id,
             text=(
-                f"🎉 **စကားဝိုင်း အစောင်ရေ {MESSAGE_TARGET} ပြည့်ပါပြီ!**\n\n"
                 f"🎟️ **Free Spin Token ကောက်ယူရန်:**\n"
                 f"ဤမက်ဆေ့ခ်ျအား **Reply** လုပ်ပြီး အောက်ပါ Code အား အမြန်ဆုံး ရိုက်ထည့်ပါ-\n\n"
                 f"👉 👉 👉  `{drop_code}`  👈 👈 👈\n\n"
