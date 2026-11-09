@@ -5,14 +5,15 @@ from datetime import datetime
 DB_NAME = "bot_database.db"
 
 # ==========================================================
-# 🎰 ပေါက်နှုန်း သတ်မှတ်ချက်များ (မပေါက်နိုင်ခြေ ၅၀%)
+# 🎰 ပေါက်နှုန်း သတ်မှတ်ချက်များ
 # ==========================================================
+# ပုံမှန်လှည့်ချိန် ပေါက်နှုန်း (ဆုကြီးများ မဖောင်းပွစေရန် ထိန်းထားသည်)
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
-WEIGHTS = [50.0, 25.7, 11.4, 6.4, 3.6, 1.7, 0.9, 0.3]
+WEIGHTS = [65.0, 18.0, 8.0, 4.5, 2.5, 1.2, 0.6, 0.2]
 
-# ၃ ကြိမ်မြောက် Pity (အများဆုံး ၃၀၀ အထိသာ အာမခံနှစ်သိမ့်ဆု ပေးသည်)
-PITY_PRIZES = [50, 100, 150, 200, 300]
-PITY_WEIGHTS = [25.7, 11.4, 6.4, 3.6, 1.7]
+# ၃ ကြိမ်မြောက် Pity (နှစ်သိမ့်ဆု): အများဆုံး ၂၀၀ အထိသာ ပေးပြီး နဂိုအချိုးအတိုင်း ခွဲထားသည်
+PITY_PRIZES = [50, 100, 150, 200]
+PITY_WEIGHTS = [18.0, 8.0, 4.5, 2.5]
 
 async def init_db():
     async with aiosqlite.connect(DB_NAME) as db:
@@ -41,7 +42,6 @@ async def init_db():
                 user_id INTEGER,
                 operator TEXT,
                 phone TEXT,
-                amount INTEGER DEFAULT 3000,
                 status TEXT DEFAULT 'pending',
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
@@ -78,33 +78,6 @@ async def add_tokens(user_id: int, amount: int):
         res = await cursor.fetchone()
         return res[0] if res else 0
 
-async def give_free_token(user_id: int):
-    return await add_tokens(user_id, 1)
-
-async def deduct_coins(user_id: int, amount: int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT coins FROM users WHERE user_id = ?", (user_id,))
-        row = await cursor.fetchone()
-        if not row:
-            return None
-        current_coins = row[0]
-        new_coins = max(0, current_coins - amount)
-        await db.execute("UPDATE users SET coins = ? WHERE user_id = ?", (new_coins, user_id))
-        await db.commit()
-        return new_coins
-
-async def deduct_tokens(user_id: int, amount: int):
-    async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
-        row = await cursor.fetchone()
-        if not row:
-            return None
-        current_tokens = row[0]
-        new_tokens = max(0, current_tokens - amount)
-        await db.execute("UPDATE users SET tokens = ? WHERE user_id = ?", (new_tokens, user_id))
-        await db.commit()
-        return new_tokens
-
 async def record_invitation(inviter_id: int, new_member_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT user_id FROM invited_members WHERE user_id = ?", (new_member_id,))
@@ -116,6 +89,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
+        # လူ ၂ ယောက် Add လျှင် Spin ၁ ကြိမ် ရရှိမည်
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -134,13 +108,15 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         user = await cursor.fetchone()
         tokens, losses, coins = user
 
+        # 🛑 အများဆုံး ၃,၀၀၀ ကျပ် ပြည့်နေပါက မဲလှည့်ခွင့် ခေတ္တပိတ်ထားမည်
         if not is_owner and coins >= 3000:
             return "MAX_BALANCE_REACHED", coins
 
+        # Token ရှိ/မရှိ စစ်ဆေးခြင်း
         if tokens < 1:
             return "NO_TOKEN", 0
 
-        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက အများဆုံး ၃၀၀ အထိသာ ပေးသည်)
+        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက အများဆုံး ၂၀၀ အထိသာ နှစ်သိမ့်ဆု ပေးမည်)
         if losses >= 2:
             prize = random.choices(PITY_PRIZES, weights=PITY_WEIGHTS, k=1)[0]
             new_losses = 0
@@ -148,6 +124,7 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             prize = random.choices(PRIZES, weights=WEIGHTS, k=1)[0]
             new_losses = losses + 1 if prize == 0 else 0
 
+        # Token 1 ခု ဖြတ်ပြီး ဒေတာ update လုပ်ခြင်း
         await db.execute("""
             UPDATE users 
             SET tokens = tokens - 1, 
@@ -162,25 +139,18 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         res = await cursor.fetchone()
         return prize, res
 
-async def create_redemption(user_id: int, operator: str, phone: str, amount: int = 3000):
+async def create_redemption(user_id: int, operator: str, phone: str):
     async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT coins FROM users WHERE user_id = ?", (user_id,))
-        user_row = await cursor.fetchone()
-        if not user_row or user_row[0] < amount:
-            return None, "INSUFFICIENT_BALANCE"
-
-        # ဘေလ် ၃၀၀၀ အား နုတ်ယူထားမည်
-        await db.execute("UPDATE users SET coins = coins - ? WHERE user_id = ?", (amount, user_id))
         cursor = await db.execute(
-            "INSERT INTO redemptions (user_id, operator, phone, amount, status) VALUES (?, ?, ?, ?, 'pending')",
-            (user_id, operator, phone, amount)
+            "INSERT INTO redemptions (user_id, operator, phone, status) VALUES (?, ?, ?, 'pending')",
+            (user_id, operator, phone)
         )
         await db.commit()
-        return cursor.lastrowid, "SUCCESS"
+        return cursor.lastrowid
 
 async def approve_redemption(redemption_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT user_id, operator, phone, status, amount FROM redemptions WHERE id = ?", (redemption_id,))
+        cursor = await db.execute("SELECT user_id, operator, phone, status FROM redemptions WHERE id = ?", (redemption_id,))
         row = await cursor.fetchone()
         if row and row[3] == "pending":
             await db.execute("UPDATE redemptions SET status = 'approved' WHERE id = ?", (redemption_id,))
@@ -188,10 +158,11 @@ async def approve_redemption(redemption_id: int):
             return row
         return None
 
-async def get_all_pending_redemptions():
+async def get_user_pending_redemptions(user_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
-            "SELECT id, user_id, operator, phone, amount, created_at FROM redemptions WHERE status = 'pending' ORDER BY id ASC"
+            "SELECT operator, phone, created_at FROM redemptions WHERE user_id = ? AND status = 'pending' ORDER BY id DESC",
+            (user_id,)
         )
         return await cursor.fetchall()
 
