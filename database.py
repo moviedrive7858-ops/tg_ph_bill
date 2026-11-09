@@ -5,9 +5,9 @@ from datetime import datetime
 DB_NAME = "bot_database.db"
 
 # ==========================================================
-# 🎰 ပေါက်နှုန်း သတ်မှတ်ချက်များ
+# 🎰 ပေါက်နှုန်း သတ်မှတ်ချက်များ (ဆုကြီး မလျှော့ဘဲ ပေါက်နှုန်း ၄၇% မြှင့်ထားသည်)
 # ==========================================================
-
+# ပုံမှန်လှည့်ချိန် ပေါက်နှုန်း
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
 WEIGHTS = [53.0, 27.5, 10.5, 3.5, 2.5, 1.2, 0.6, 0.2]
 
@@ -115,6 +115,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
+        # လူ ၂ ယောက် Add လျှင် Spin ၁ ကြိမ် အတိအကျ ပေးခြင်း
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -133,12 +134,15 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         user = await cursor.fetchone()
         tokens, losses, coins = user
 
+        # 🛑 အများဆုံး ၃,၀၀၀ ကျပ် ပြည့်နေပါက မဲလှည့်ခွင့် ခေတ္တပိတ်ထားမည်
         if not is_owner and coins >= 3000:
             return "MAX_BALANCE_REACHED", coins
 
+        # Token ရှိ/မရှိ စစ်ဆေးခြင်း
         if tokens < 1:
             return "NO_TOKEN", 0
 
+        # Pity System (၂ ကြိမ်ဆက် မပေါက်ပါက အများဆုံး ၂၀၀ အထိသာ နှစ်သိမ့်ဆု ပေးမည်)
         if losses >= 2:
             prize = random.choices(PITY_PRIZES, weights=PITY_WEIGHTS, k=1)[0]
             new_losses = 0
@@ -146,6 +150,7 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             prize = random.choices(PRIZES, weights=WEIGHTS, k=1)[0]
             new_losses = losses + 1 if prize == 0 else 0
 
+        # Token 1 ခု ဖြတ်ပြီး ဒေတာ update လုပ်ခြင်း
         await db.execute("""
             UPDATE users 
             SET tokens = tokens - 1, 
