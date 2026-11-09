@@ -38,15 +38,16 @@ BOT_USERNAME = ""
 # ==========================================================
 # 🎁 General Chat Drop Tracker
 # ==========================================================
-MESSAGE_TARGET = 100
+MESSAGE_TARGET = 50   # သွက်လက်စေရန် စာကြောင်း ၅၀ ထားရှိသည် (လိုအပ်ပါက ပြင်ဆင်နိုင်သည်)
 
 chat_stats = {
     "count": 0,
     "last_user_id": None,
+    "user_consecutive_counts": 0,   # လူတစ်ယောက်တည်း ဆက်တိုက် စာရေတွက်မှု မှတ်သားရန်
     "active_drop_code": None,
     "drop_type": None,              # "token", "bill_50", "bill_100"
     "drop_message_id": None,
-    "claimed_drop_msg_id": None     # ကောက်ပြီးသား မက်ဆေ့ခ်ျ ID
+    "claimed_drop_msg_id": None     # ကောက်ယူပြီးသား မက်ဆေ့ခ်ျ ID
 }
 
 def generate_drop_code() -> str:
@@ -59,13 +60,13 @@ def generate_drop_code() -> str:
 
 def get_random_drop_reward() -> tuple:
     """
-    Drop အမျိုးအစား ကျပန်း ရွေးချယ်ခြင်း (65% / 25% / 10% အချိုးအစား):
-    - Token: 65% (အဓိကအများဆုံး)
-    - 50 Bill: 25% (မကြာခဏ)
-    - 100 Bill: 10% (ရှားပါးဆု)
+    Drop အမျိုးအစား ကျပန်း ရွေးချယ်ခြင်း (92% / 6% / 2% အချိုးအစား):
+    - Token: 92% (အဓိကအများဆုံး)
+    - 50 Bill: 6% (မကြာခဏ)
+    - 100 Bill: 2% (အလွန်ရှားပါးဆု)
     """
     reward_types = ["token", "bill_50", "bill_100"]
-    reward_weights = [65.0, 25.0, 10.0]
+    reward_weights = [92.0, 6.0, 2.0]
     chosen = random.choices(reward_types, weights=reward_weights, k=1)[0]
     
     if chosen == "token":
@@ -518,7 +519,6 @@ async def cmd_detail(message: types.Message):
         f"👥 Add ခဲ့သူ: **{inv_count} ယောက်**"
     )
 
-# 💾 Backup Command: ရိုက်သည့်နေရာ (Private/Admin Group) သို့ တိုက်ရိုက် Reply ပြန်ပို့သည်
 @dp.message(Command("backup"))
 async def cmd_manual_backup(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -742,7 +742,7 @@ async def cmd_deduct(message: types.Message):
         await message.reply("❌ `coin` သို့မဟုတ် `token` ဟု ရွေးချယ်ပေးပါ။", parse_mode="Markdown")
 
 # ==========================================================
-# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
+# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ် (92/6/2%)
 # ==========================================================
 @dp.message(F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
@@ -779,12 +779,12 @@ async def handle_chat_activity(message: types.Message):
             entered_code = text.strip().upper()
             target_code = chat_stats["active_drop_code"]
 
-            # 📌 စာလုံး အတိအကျ တူညီမှသာ ဆုပေးပါမည်
+            # စာလုံး အတိအကျ တူညီမှသာ ဆုပေးမည်
             if entered_code == target_code:
                 drop_type = chat_stats["drop_type"]
                 drop_msg_id = chat_stats["drop_message_id"]
 
-                # Code အား ပိတ်သိမ်းပြီး Claimed စာရင်းသွင်းခြင်း
+                # Code အား ပိတ်သိမ်းခြင်း
                 chat_stats["active_drop_code"] = None
                 chat_stats["drop_type"] = None
                 chat_stats["drop_message_id"] = None
@@ -792,7 +792,6 @@ async def handle_chat_activity(message: types.Message):
 
                 await db.get_or_create_user(user.id, user.username, user.first_name)
 
-                # HTML Format ဖြင့် Mention လုပ်ခြင်း
                 safe_name = (user.first_name or "User").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 if user.username:
                     winner_mention = f"@{user.username}"
@@ -815,7 +814,7 @@ async def handle_chat_activity(message: types.Message):
                     f"🔑 Code: <code>{target_code}</code>"
                 )
 
-                # ၁။ ကံထူးရှင် စာအား Group ထဲသို့ မဖြစ်မနေ ပို့ပေးခြင်း
+                # ၁။ ဂုဏ်ပြုစာ ပို့ပေးခြင်း
                 try:
                     await bot.send_message(
                         chat_id=message.chat.id,
@@ -833,7 +832,7 @@ async def handle_chat_activity(message: types.Message):
                     except Exception as err:
                         print(f"Send Congrats Error: {err}")
 
-                # ၂။ မူရင်း Drop စာကိုလည်း Claimed အဖြစ် Edit လုပ်ပေးခြင်း
+                # ၂။ မူရင်း Drop စာကို Edit လုပ်ပေးခြင်း
                 try:
                     await bot.edit_message_text(
                         chat_id=message.chat.id,
@@ -855,21 +854,25 @@ async def handle_chat_activity(message: types.Message):
             return
 
     # ------------------------------------------------------
-    # 📊 အပိုင်း (ခ) : စာကြောင်းရေ စစ်ဆေးခြင်း
+    # 📊 အပိုင်း (ခ) : စာကြောင်းရေ စစ်ဆေးခြင်း (လူတစ်ယောက်တည်း စာ ၂ ကြောင်းအထိ ခွင့်ပြုသည်)
     # ------------------------------------------------------
     if not is_valid_chat_message(text):
         return
 
     if chat_stats["last_user_id"] == user.id:
-        return
+        if chat_stats["user_consecutive_counts"] >= 2:
+            # တူညီသော User မှ ၂ ကြောင်းထက်ကျော်၍ ဆက်တိုက်ပို့ပါက စာရင်းမသွင်းပါ
+            return
+        chat_stats["user_consecutive_counts"] += 1
+    else:
+        chat_stats["last_user_id"] = user.id
+        chat_stats["user_consecutive_counts"] = 1
 
     chat_stats["count"] += 1
-    chat_stats["last_user_id"] = user.id
-
-    print(f"📊 Chat Count: {chat_stats['count']}/{MESSAGE_TARGET} | User: {user.first_name}")
+    print(f"📊 Chat Count: {chat_stats['count']}/{MESSAGE_TARGET} | User: {user.first_name} ({chat_stats['user_consecutive_counts']}/2)")
 
     # ------------------------------------------------------
-    # 🎁 အပိုင်း (ဂ) : စာကြောင်းရေ ၁၀၀ ပြည့်ပါက Drop ချပေးခြင်း
+    # 🎁 အပိုင်း (ဂ) : စာကြောင်းရေ ပြည့်ပါက Drop ချပေးခြင်း
     # ------------------------------------------------------
     if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
         chat_stats["count"] = 0
