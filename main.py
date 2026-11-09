@@ -1,6 +1,9 @@
 import os
 import time
 import asyncio
+import random
+import string
+import re
 from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
@@ -29,6 +32,37 @@ dp = Dispatcher(storage=MemoryStorage())
 user_cooldowns = {}
 user_active_menu = {}
 BOT_USERNAME = ""
+
+# ==========================================================
+# 🎁 General Chat Drop Tracker
+# ==========================================================
+MESSAGE_TARGET = 100
+
+chat_stats = {
+    "count": 0,
+    "last_user_id": None,
+    "active_drop_code": None,
+    "drop_message_id": None
+}
+
+def generate_drop_code() -> str:
+    letters = random.choices(string.ascii_uppercase, k=3)
+    digits = random.choices(string.digits, k=2)
+    combined = letters + digits
+    random.shuffle(combined)
+    return "".join(combined)
+
+def is_valid_chat_message(text: str) -> bool:
+    clean_text = text.strip()
+    if len(clean_text) < 5:
+        return False
+    if len(clean_text.split()) < 2:
+        return False
+    if clean_text.isdigit():
+        return False
+    if re.fullmatch(r"[\W_]+", clean_text):
+        return False
+    return True
 
 class RedeemState(StatesGroup):
     waiting_for_operator = State()
@@ -94,7 +128,17 @@ async def new_member_message_handler(message: types.Message):
         if inviter.id != new_member.id:
             await db.get_or_create_user(inviter.id, inviter.username, inviter.first_name)
             await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
-            await db.record_invitation(inviter.id, new_member.id)
+            awarded = await db.record_invitation(inviter.id, new_member.id)
+            if awarded:
+                inviter_mention = f"@{inviter.username}" if inviter.username else inviter.first_name
+                try:
+                    await message.reply(
+                        f"🎉 ဂုဏ်ယူပါတယ် {inviter_mention}!\n"
+                        f"Member ၂ ယောက် ဖိတ်ခေါ်မှု ပြည့်မြောက်သဖြင့် 🎟️ **Spin Token ၁ ခု** ရရှိပါသည်!",
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
 
 # ==========================================================
 # 🎮 Lucky Spin Menu
@@ -107,7 +151,6 @@ def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="ဖုန်းဘေလ် လဲလှည်မည်", url=redeem_url)]
     ])
 
-# ⏳ မသုံးဘဲ ပစ်ထားသော Menu ကို အလိုအလျောက် ပြန်ဖျက်ပေးသည့် Background Task (၃၀ စက္ကန့်)
 async def auto_delete_idle_menu(chat_id: int, message_id: int, user_id: int, delay: int = 30):
     await asyncio.sleep(delay)
     if user_active_menu.get(user_id) == message_id:
@@ -126,13 +169,11 @@ async def open_spin_menu(message: types.Message):
     
     uid = message.from_user.id
     
-    # Topic မရှုပ်စေရန် User ရိုက်သော /spin command စာကို ချက်ချင်း ဖျက်ပေးခြင်း
     try:
         await message.delete()
     except Exception:
         pass
 
-    # ယခင်က ဖွင့်ထားပြီး မဖျက်ရသေးသော Menu အဟောင်းရှိပါက အရင်ဖျက်ပေးခြင်း
     if uid in user_active_menu:
         old_msg_id = user_active_menu[uid]
         try:
@@ -157,7 +198,6 @@ async def open_spin_menu(message: types.Message):
     )
     user_active_menu[uid] = sent_msg.message_id
 
-    # ၃၀ စက္ကန့်အတွင်း ခလုတ်မနှိပ်ပါက အလိုအလျောက် ပြန်ဖျက်မည့် Task
     asyncio.create_task(auto_delete_idle_menu(message.chat.id, sent_msg.message_id, uid, delay=30))
 
 # ==========================================================
@@ -172,7 +212,6 @@ async def handle_spin(callback: types.CallbackQuery):
         await callback.answer("ဤခလုတ်သည် သင့်အတွက် မဟုတ်ပါ။ /spin ဖြင့် ကိုယ်တိုင် စတင်ပါ!", show_alert=True)
         return
 
-    # Owner မဟုတ်မှသာ Cooldown ၇ စက္ကန့် စစ်မည်
     if not is_owner:
         current_time = time.time()
         last_time = user_cooldowns.get(orig_user_id, 0)
@@ -206,10 +245,8 @@ async def handle_spin(callback: types.CallbackQuery):
     except Exception:
         pass
 
-    # Database မှ မဲရလဒ် တွက်ထုတ်ခြင်း
     result, data = await db.spin_wheel(orig_user_id, is_owner=is_owner)
 
-    # 🛑 ၃,၀၀၀ ကျပ် ပြည့်နေပါက သတိပေးချက်စာ ပြသပြီး မဲမလှည့်ပေးခြင်း
     if result == "MAX_BALANCE_REACHED":
         msg = await bot.send_message(
             chat_id=chat_id,
@@ -265,7 +302,6 @@ async def handle_spin(callback: types.CallbackQuery):
         reply_markup=spin_again_kb
     )
 
-    # 📢 မဲပေါက်ပါက အောက်တွင် Topic ကြေငြာချက် သီးသန့်ပို့ပေးခြင်း
     if result > 0:
         await bot.send_message(
             chat_id=chat_id,
@@ -273,7 +309,6 @@ async def handle_spin(callback: types.CallbackQuery):
             text=f"🎉 ဂုဏ်ယူပါတယ်! {callback.from_user.first_name} သည် **{result} Bill** ကံထူးသွားပါသည်!"
         )
 
-    # ⏳ အပေါ်က ကိုယ်ပိုင် အချက်အလက်စာကို ၁၅ စက္ကန့်အကြာတွင် အလိုအလျောက် ပြန်ဖျက်ပေးခြင်း
     await asyncio.sleep(15)
     try:
         await sent_result.delete()
@@ -373,7 +408,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     user_info = await db.get_or_create_user(uid, "", "")
     user_name = user_info[2] or "User"
 
-    # ၁။ Admin Log Group ထဲရှိ စာသားကို ပြီးစီးကြောင်း ပြောင်းလဲခြင်း
     updated_text = (
         f"✅ [ဘေလ်ဖြည့်ပြီးပါပြီ]\n\n"
         f"အကောင့်: {user_name} (`{uid}`)\n"
@@ -385,7 +419,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     await callback.message.edit_text(updated_text)
     await callback.answer("ဘေလ်ဖြည့်ပြီးကြောင်း မှတ်တမ်းတင်ပြီးပါပြီ။")
 
-    # ၂။ Main Group ၏ Lucky Spin Topic ထဲသို့ ကြေငြာချက်ပို့ပေးခြင်း
     if SPIN_GROUP_ID != 0 and SPIN_TOPIC_ID != 0:
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! {user_name} သို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ!"
         try:
@@ -397,7 +430,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         except Exception as e:
             print(f"Announcement Error: {e}")
 
-    # ၃။ User ထံသို့လည်း Private DM အသိပေးစာ ပို့ပေးခြင်း
     try:
         await bot.send_message(
             chat_id=uid,
@@ -407,7 +439,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         pass
 
 # ==========================================================
-# 👑 Owner Commands (/top10, /detail, /backup, /restore, /givebill, /givetoken)
+# 👑 Owner Commands
 # ==========================================================
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
@@ -560,6 +592,182 @@ async def cmd_givetoken(message: types.Message):
 
     new_t = await db.add_tokens(target_id, amount)
     await message.reply(f"🎟️ {target_name} (`{target_id}`) သို့ +{amount} Spin လှည့်ခွင့် ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_t} ကြိမ်)")
+
+# ==========================================================
+# 🛑 Coin & Token ပြန်လည်နှုတ်ယူခြင်း Command (/deduct)
+# ==========================================================
+@dp.message(Command("deduct"))
+async def cmd_deduct(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+
+    args = message.text.split()
+    target_id = None
+    target_name = ""
+
+    # နည်းလမ်း (၁) : စာကို Reply ထောက်၍ နှုတ်ခြင်း (/deduct coin 500)
+    if message.reply_to_message:
+        target_user = message.reply_to_message.from_user
+        if target_user.is_bot:
+            await message.reply("❌ Bot များထံမှ နှုတ်ယူ၍ မရနိုင်ပါ။")
+            return
+        target_id = target_user.id
+        target_name = target_user.first_name
+
+        if len(args) < 3:
+            await message.reply("⚠️ **Reply ဖြင့် နှုတ်နည်း:**\n• `/deduct coin 500`\n• `/deduct token 2`", parse_mode="Markdown")
+            return
+        item_type = args[1].lower()
+        amount_str = args[2]
+
+    # နည်းလမ်း (၂) : ID သို့မဟုတ် Username ဖြင့် နှုတ်ခြင်း
+    else:
+        if len(args) < 4:
+            await message.reply(
+                "⚠️ **အသုံးပြုပုံ မမှန်ကန်ပါ!**\n\n"
+                "👉 **Reply ဖြင့် သုံးလိုပါက:**\n"
+                "User ၏ စာကို Reply ထောက်၍ `/deduct coin 500`\n\n"
+                "👉 **ID/Username ဖြင့် သုံးလိုပါက:**\n"
+                "`/deduct <ID/@username> <coin/token> <ပမာဏ>`",
+                parse_mode="Markdown"
+            )
+            return
+
+        target_str = args[1]
+        item_type = args[2].lower()
+        amount_str = args[3]
+
+        if target_str.startswith("@") or not target_str.isdigit():
+            target_id = await db.get_user_by_username(target_str)
+            if not target_id:
+                await message.reply(f"❌ User **{target_str}** အား Database တွင် ရှာမတွေ့ပါ။", parse_mode="Markdown")
+                return
+            target_name = target_str
+        else:
+            target_id = int(target_str)
+            target_name = f"ID: `{target_id}`"
+
+    if not amount_str.isdigit() or int(amount_str) <= 0:
+        await message.reply("❌ ပမာဏသည် 0 ထက်ကြီးသော ဂဏန်း ဖြစ်ရပါမည်။")
+        return
+    amount = int(amount_str)
+
+    await db.get_or_create_user(target_id, "", "")
+
+    if item_type in ["coin", "coins", "bill", "money", "mmk"]:
+        new_balance = await db.deduct_coins(target_id, amount)
+        await message.reply(
+            f"✅ **{target_name}** ထံမှ ဘေလ် **{amount} MMK** အောင်မြင်စွာ နှုတ်ယူပြီးပါပြီ!\n"
+            f"💰 လက်ကျန်ငွေ: **{new_balance} MMK**",
+            parse_mode="Markdown"
+        )
+    elif item_type in ["token", "tokens"]:
+        new_tokens = await db.deduct_tokens(target_id, amount)
+        await message.reply(
+            f"✅ **{target_name}** ထံမှ Token **{amount} ခု** အောင်မြင်စွာ နှုတ်ယူပြီးပါပြီ!\n"
+            f"🎟️ လက်ကျန် Token: **{new_tokens} ခု**",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.reply("❌ `coin` သို့မဟုတ် `token` ဟု ရွေးချယ်ပေးပါ။", parse_mode="Markdown")
+
+# ==========================================================
+# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
+# ==========================================================
+@dp.message(F.text, ~F.text.startswith("/"))
+async def handle_chat_activity(message: types.Message):
+    # Spin Topic ထဲက စာဆိုလျှင် Chat Drop စာရင်းထဲ မထည့်ပါ
+    if SPIN_TOPIC_ID != 0 and message.message_thread_id == SPIN_TOPIC_ID:
+        return
+
+    user = message.from_user
+    if not user or user.is_bot:
+        return
+
+    text = message.text or ""
+
+    # ------------------------------------------------------
+    # 🎯 အပိုင်း (က) : Drop Code ကို Reply လုပ်၍ အရင်ဆုံး လုယူခြင်း
+    # ------------------------------------------------------
+    if chat_stats["active_drop_code"] and message.reply_to_message:
+        if message.reply_to_message.message_id == chat_stats["drop_message_id"]:
+            entered_code = text.strip().upper()
+            if entered_code == chat_stats["active_drop_code"]:
+                target_code = chat_stats["active_drop_code"]
+                drop_msg_id = chat_stats["drop_message_id"]
+
+                # နောက်ထပ် လူများ မလုနိုင်စေရန် ချက်ချင်း ပိတ်သိမ်းခြင်း
+                chat_stats["active_drop_code"] = None
+                chat_stats["drop_message_id"] = None
+
+                await db.get_or_create_user(user.id, user.username, user.first_name)
+                total_tokens = await db.add_tokens(user.id, 1)
+
+                winner_mention = f"@{user.username}" if user.username else f"[{user.first_name}](tg://user?id={user.id})"
+
+                # General ထဲ ကြေငြာပေးခြင်း
+                await bot.send_message(
+                    chat_id=message.chat.id,
+                    message_thread_id=message.message_thread_id,
+                    text=(
+                        f"⚡ **အမြန်ဆုံး ကောက်ယူသွားပါပြီ!**\n\n"
+                        f"🎉 ဂုဏ်ယူပါတယ် {winner_mention}! Code `[{target_code}]` အား အမြန်ဆုံး အတိအကျ ရိုက်ထည့်နိုင်ခဲ့သဖြင့် "
+                        f"🎟️ **Free Spin Token ၁ ခု** ရရှိသွားပါပြီ!\n\n"
+                        f"👉 {winner_mention} ၏ လက်ကျန် Token: **{total_tokens} ခု**\n"
+                        f"*(Spin Topic တွင် သွားရောက် ကံစမ်းနိုင်ပါပြီ)*"
+                    ),
+                    parse_mode="Markdown"
+                )
+
+                try:
+                    await bot.edit_message_text(
+                        chat_id=message.chat.id,
+                        message_id=drop_msg_id,
+                        text=(
+                            f"🎁 **Token Drop ကောက်ယူပြီးစီးသွားပါပြီ!**\n\n"
+                            f"🏆 ကံထူးရှင်: {winner_mention}\n"
+                            f"🔑 Code: `{target_code}`"
+                        ),
+                        parse_mode="Markdown"
+                    )
+                except Exception:
+                    pass
+                return
+
+    # ------------------------------------------------------
+    # 📊 အပိုင်း (ခ) : စာကြောင်းရေ စစ်ဆေးခြင်း
+    # ------------------------------------------------------
+    if not is_valid_chat_message(text):
+        return
+
+    # လူတစ်ယောက်တည်း ဆက်တိုက်ပို့ခြင်းကို မရေတွက်ပါ
+    if chat_stats["last_user_id"] == user.id:
+        return
+
+    chat_stats["count"] += 1
+    chat_stats["last_user_id"] = user.id
+
+    # ------------------------------------------------------
+    # 🎁 အပိုင်း (ဂ) : စာကြောင်းရေ ၁၀၀ ပြည့်ပါက Drop ချပေးခြင်း
+    # ------------------------------------------------------
+    if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
+        chat_stats["count"] = 0
+        drop_code = generate_drop_code()
+        chat_stats["active_drop_code"] = drop_code
+
+        drop_msg = await bot.send_message(
+            chat_id=message.chat.id,
+            message_thread_id=message.message_thread_id,
+            text=(
+                f"🎉 **စကားဝိုင်း အစောင်ရေ ၁၀၀ ပြည့်ပါပြီ!**\n\n"
+                f"🎟️ **Free Spin Token ကောက်ယူရန်:**\n"
+                f"ဤမက်ဆေ့ခ်ျအား **Reply** လုပ်ပြီး အောက်ပါ Code အား အမြန်ဆုံး ရိုက်ထည့်ပါ-\n\n"
+                f"👉 👉 👉  `{drop_code}`  👈 👈 👈\n\n"
+                f"*(အရင်ဆုံး အတိအကျ Reply ရိုက်ထည့်သူ ၁ ဦးသာ ရရှိပါမည်)*"
+            ),
+            parse_mode="Markdown"
+        )
+        chat_stats["drop_message_id"] = drop_msg.message_id
 
 # ==========================================================
 # 🚀 Startup & Polling
