@@ -48,7 +48,7 @@ async def init_db():
         await db.commit()
 
 async def get_or_create_user(user_id: int, username: str, first_name: str):
-    """IntegrityError မတက်စေရန် INSERT OR IGNORE ဖြင့် စနစ်တကျ ရေးသားထားသည်"""
+    """UNIQUE constraint failed error မတက်စေရန် INSERT OR IGNORE ဖြင့် ရေးသားထားသည်"""
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute(
             """
@@ -88,6 +88,7 @@ async def add_tokens(user_id: int, amount: int):
         return res[0] if res else 0
 
 async def deduct_coins(user_id: int, amount: int):
+    """User ဆီမှ Coins နှုတ်ယူခြင်း (အနုတ်လက္ခဏာ မဖြစ်စေပါ)"""
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT coins FROM users WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
@@ -100,6 +101,7 @@ async def deduct_coins(user_id: int, amount: int):
         return new_coins
 
 async def deduct_tokens(user_id: int, amount: int):
+    """User ဆီမှ Token နှုတ်ယူခြင်း (အနုတ်လက္ခဏာ မဖြစ်စေပါ)"""
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
@@ -156,4 +158,62 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         await db.execute("""
             UPDATE users 
             SET tokens = tokens - 1, 
-                coins = coins + ?,
+                coins = coins + ?, 
+                consecutive_losses = ?, 
+                last_spin_date = ? 
+            WHERE user_id = ?
+        """, (prize, new_losses, today, user_id))
+        await db.commit()
+
+        cursor = await db.execute("SELECT coins, tokens FROM users WHERE user_id = ?", (user_id,))
+        res = await cursor.fetchone()
+        return prize, res
+
+async def create_redemption(user_id: int, operator: str, phone: str):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "INSERT INTO redemptions (user_id, operator, phone, status) VALUES (?, ?, ?, 'pending')",
+            (user_id, operator, phone)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+async def approve_redemption(redemption_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id, operator, phone, status FROM redemptions WHERE id = ?", (redemption_id,))
+        row = await cursor.fetchone()
+        if row and row[3] == "pending":
+            await db.execute("UPDATE redemptions SET status = 'approved' WHERE id = ?", (redemption_id,))
+            await db.commit()
+            return row
+        return None
+
+async def get_user_pending_redemptions(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute(
+            "SELECT operator, phone, created_at FROM redemptions WHERE user_id = ? AND status = 'pending' ORDER BY id DESC",
+            (user_id,)
+        )
+        return await cursor.fetchall()
+
+async def get_top_10():
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT first_name, username, coins, tokens FROM users ORDER BY coins DESC LIMIT 10")
+        return await cursor.fetchall()
+
+async def get_user_detail(user_id: int):
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        user = await cursor.fetchone()
+        if not user:
+            return None
+        c_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (user_id,))
+        inv_count = (await c_cursor.fetchone())[0]
+        return user, inv_count
+
+async def get_user_by_username(username: str):
+    clean_un = username.lstrip("@")
+    async with aiosqlite.connect(DB_NAME) as db:
+        cursor = await db.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (clean_un,))
+        row = await cursor.fetchone()
+        return row[0] if row else None
