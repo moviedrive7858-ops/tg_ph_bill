@@ -2,6 +2,9 @@ import os
 import random
 import string
 import re
+import asyncio
+from aiohttp import web
+
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.constants import ParseMode
 from telegram.ext import (
@@ -15,15 +18,17 @@ from telegram.ext import (
 )
 import database as db
 
-# Bot Token နှင့် Owner ID
+# ==========================================================
+# ⚙️ Settings & Credentials
+# ==========================================================
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-OWNER_ID = int(os.getenv("OWNER_ID", "0"))  # သင့် Telegram User ID ထည့်ပါ
+OWNER_ID = int(os.getenv("OWNER_ID", "0"))  # မိမိ Telegram User ID ထည့်ပါ
 
-# Topic ID သတ်မှတ်ချက်များ (General က Main Chat ဖြစ်ပါက None ထားပါ)
+# Topic ID သတ်မှတ်ချက်များ (General သီးသန့် Topic ရှိပါက ID ထည့်ပါ၊ မရှိပါက None)
 GENERAL_TOPIC_ID = None
 SPIN_TOPIC_ID = None
 
-# Chat Activity Drop Settings (စာအစောင်ရေ ၁၀၀ ပြည့်လျှင် ၁ ခုကျမည်)
+# Chat Activity Drop Settings (စာအစောင်ရေ ၁၀၀ ပြည့်လျှင် ၁ ကြိမ် Drop ကျမည်)
 MESSAGE_TARGET = 100
 
 chat_stats = {
@@ -33,6 +38,25 @@ chat_stats = {
     "drop_message_id": None
 }
 
+# ==========================================================
+# 🌐 Render Port Binding (Dummy Web Server)
+# ==========================================================
+async def dummy_health_check(request):
+    return web.Response(text="Bot is running smoothly!")
+
+async def start_dummy_server():
+    port = int(os.environ.get("PORT", 8080))
+    app = web.Application()
+    app.router.add_get("/", dummy_health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+    print(f"🌐 Dummy Server bound to port {port} for Render")
+
+# ==========================================================
+# 🛠️ Helper Functions
+# ==========================================================
 def generate_drop_code() -> str:
     """English စာလုံး ၃ လုံး နှင့် နံပါတ် ၂ လုံး ရောနှောထုတ်ပေးခြင်း (ဥပမာ- K7B2M)"""
     letters = random.choices(string.ascii_uppercase, k=3)
@@ -43,20 +67,19 @@ def generate_drop_code() -> str:
 
 def is_valid_message(text: str) -> bool:
     clean_text = text.strip()
-    # စာလုံးရေ ၅ လုံးထက် မနည်းရ
     if len(clean_text) < 5:
         return False
-    # စကားလုံး ၂ လုံးထက် မနည်းရ
     if len(clean_text.split()) < 2:
         return False
-    # ဂဏန်းသီးသန့် မဖြစ်ရ
     if clean_text.isdigit():
         return False
-    # သင်္ကေတ / အစက် သီးသန့် မဖြစ်ရ
     if re.fullmatch(r"[\W_]+", clean_text):
         return False
     return True
 
+# ==========================================================
+# 🤖 Bot Handlers
+# ==========================================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await db.get_or_create_user(user.id, user.username, user.first_name)
@@ -128,7 +151,7 @@ async def handle_general_chat(update: Update, context: ContextTypes.DEFAULT_TYPE
 
                 winner_mention = f"@{user.username}" if user.username else f"<a href='tg://user?id={user.id}'>{user.first_name}</a>"
 
-                # 📢 General ခန်းထဲသို့ Winner အား Mention ခေါ်၍ ကြေငြာပေးခြင်း
+                # General ခန်းထဲသို့ Winner အား Mention ဖြင့် ကြေငြာပေးခြင်း
                 await context.bot.send_message(
                     chat_id=chat.id,
                     message_thread_id=GENERAL_TOPIC_ID,
@@ -206,7 +229,7 @@ async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     target_id = None
     target_name = ""
 
-    # နည်းလမ်း (၁) : စာကို Reply လုပ်ပြီး နှုတ်ခြင်း
+    # နည်းလမ်း (၁) : စာကို Reply လုပ်ပြီး နှုတ်ခြင်း (/deduct coin 500)
     if msg.reply_to_message:
         target_user = msg.reply_to_message.from_user
         if target_user.is_bot:
@@ -277,6 +300,9 @@ async def deduct_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await msg.reply_text("❌ <code>coin</code> သို့မဟုတ် <code>token</code> ဟု ရွေးချယ်ပေးပါ။", parse_mode=ParseMode.HTML)
 
+# ==========================================================
+# 🔘 Inline Button Callbacks
+# ==========================================================
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -314,21 +340,32 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             parse_mode=ParseMode.HTML
         )
 
-def main():
-    import asyncio
-    asyncio.run(db.init_db())
+# ==========================================================
+# 🚀 Entrypoint
+# ==========================================================
+async def run_bot():
+    await db.init_db()
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    # Handlers
     app.add_handler(CommandHandler("start", start_command))
     app.add_handler(CommandHandler("deduct", deduct_command))
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     app.add_handler(ChatMemberHandler(handle_chat_member_updated, ChatMemberHandler.CHAT_MEMBER))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_general_chat))
 
-    print("🤖 Bot is running...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    # Render Port Binding အတွက် Dummy Server စတင်ခြင်း
+    await start_dummy_server()
+
+    print("🤖 Bot is starting polling...")
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+
+    # Bot ဆက်လက် အလုပ်လုပ်နေစေရန် ထိန်းထားခြင်း
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(run_bot())
     
