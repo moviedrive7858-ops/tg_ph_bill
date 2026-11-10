@@ -35,17 +35,15 @@ user_cooldowns = {}
 user_active_menu = {}
 BOT_USERNAME = ""
 
-# 🔒 Lock များ
 claim_lock = asyncio.Lock()
 duel_lock = asyncio.Lock()
 
-# 🎲 တက်ကြွနေသော Duel စိန်ခေါ်မှုများ (challenge_id -> data)
 active_duels = {}
 
 # ==========================================================
 # 🎁 General Chat Drop Tracker
 # ==========================================================
-MESSAGE_TARGET = 100   # စာကြောင်းရေ ၁၀၀ သို့ သတ်မှတ်ထားသည်
+MESSAGE_TARGET = 100
 
 chat_stats = {
     "count": 0,
@@ -216,10 +214,11 @@ async def cmd_lucky_duel(message: types.Message):
         return
 
     challenger = message.from_user
-    await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
-
+    is_owner = (challenger.id == OWNER_ID)
     user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
-    if user_data[3] - 50 < 300:
+
+    # Owner မဟုတ်မှသာ လက်ကျန် ၃၅၀ ကျပ် စစ်ဆေးမည်
+    if not is_owner and user_data[3] - 50 < 300:
         await message.reply(f"❌ **ကစားရန် လက်ကျန်မလုံလောက်ပါ!**\nကစားပြီးပါက အနည်းဆုံး ၃၀၀ ကျပ် ကျန်ရမည်ဖြစ်၍ အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည် (လက်ရှိ: {user_data[3]} ကျပ်)။")
         return
 
@@ -243,7 +242,6 @@ async def cmd_lucky_duel(message: types.Message):
         "chat_id": message.chat.id
     }
 
-    # စက္ကန့် ၆၀ ပြည့်လျှင် Expire ဖြစ်မည်
     await asyncio.sleep(60)
     if challenge_id in active_duels:
         del active_duels[challenge_id]
@@ -272,8 +270,8 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
         await db.get_or_create_user(accepter.id, accepter.username, accepter.first_name)
 
-        # သတ်မှတ်ချက်များ စစ်ဆေးခြင်း
-        eligible, reason = await db.check_duel_eligibility(challenger_id, accepter.id)
+        # သတ်မှတ်ချက်များ စစ်ဆေးခြင်း (Owner ID ပါ ထည့်သွင်းပေးထားသည်)
+        eligible, reason = await db.check_duel_eligibility(challenger_id, accepter.id, owner_id=OWNER_ID)
         if not eligible:
             if reason == "P1_INSUFFICIENT":
                 await callback.answer(f"{challenger_name} တွင် လက်ကျန် ၃၅၀ မပြည့်တော့ပါ!", show_alert=True)
@@ -296,18 +294,14 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     p2_is_owner = (accepter.id == OWNER_ID)
 
     if p1_is_owner:
-        # Challenger က Owner ဖြစ်နေပါက
         winner_id = random.choices([challenger_id, accepter.id], weights=[67.0, 33.0], k=1)[0]
     elif p2_is_owner:
-        # Accepter က Owner ဖြစ်နေပါက
         winner_id = random.choices([accepter.id, challenger_id], weights=[67.0, 33.0], k=1)[0]
     else:
-        # သာမန် Member အချင်းချင်း 50/50
         winner_id = random.choice([challenger_id, accepter.id])
 
     loser_id = accepter.id if winner_id == challenger_id else challenger_id
 
-    # Database ထဲသို့ မှတ်တမ်းတင်ပြီး ငွေအပြောင်းအလဲ လုပ်ခြင်း
     w_coins, l_coins = await db.record_duel_match(winner_id, loser_id, challenger_id, accepter.id)
 
     winner_name = challenger_name if winner_id == challenger_id else accepter.first_name
