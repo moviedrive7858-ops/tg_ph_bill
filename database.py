@@ -11,7 +11,7 @@ DB_NAME = "bot_database.db"
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
 WEIGHTS = [60.0, 23.0, 8.5, 4.0, 2.5, 1.2, 0.6, 0.2]
 
-# ၃ ကြိမ်မြောက် Pity (၂ ကြိမ်ဆက် မပေါက်ပါက အများဆုံး ၂၀၀ အထိ အာမခံ)
+# ၄ ကြိမ်မြောက် Pity (၃ ကြိမ်ဆက် မပေါက်မှသာ အများဆုံး ၂၀၀ အထိ အာမခံ)
 PITY_PRIZES = [50, 100, 150, 200]
 PITY_WEIGHTS = [23.0, 8.5, 4.0, 2.5]
 
@@ -149,7 +149,8 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         if tokens < 1:
             return "NO_TOKEN", 0
 
-        if losses >= 2:
+        # 📌 ၃ ကြိမ်ဆက်တိုက် မပေါက်မှသာ ၄ ကြိမ်မြောက်တွင် Pity ဆုပေးမည်
+        if losses >= 3:
             prize = random.choices(PITY_PRIZES, weights=PITY_WEIGHTS, k=1)[0]
             new_losses = 0
         else:
