@@ -40,9 +40,6 @@ duel_lock = asyncio.Lock()
 
 active_duels = {}
 
-# ==========================================================
-# 🎁 General Chat Drop Tracker
-# ==========================================================
 MESSAGE_TARGET = 100
 
 chat_stats = {
@@ -80,9 +77,12 @@ def is_valid_chat_message(text: str) -> bool:
         return False
     return True
 
+# 📌 FSM States for Bill & Bear Gift
 class RedeemState(StatesGroup):
+    waiting_for_reward_choice = State()
     waiting_for_operator = State()
     waiting_for_phone = State()
+    waiting_for_gift_username = State()
 
 # ==========================================================
 # 🌐 Render Dummy Web Server
@@ -216,7 +216,6 @@ async def cmd_lucky_duel(message: types.Message):
     challenger = message.from_user
     is_owner = (challenger.id == OWNER_ID)
 
-    # 🔒 စိန်ခေါ်စာ မဆော့ရသေးမီ နောက်ထပ် ထပ်ပို့မရအောင် တားဆီးခြင်း
     for c_id, d_info in list(active_duels.items()):
         if d_info["challenger_id"] == challenger.id:
             await message.reply("⚠️ **သင်ဖွင့်ထားသော စိန်ခေါ်မှု ရှိနေဆဲဖြစ်ပါသည်!**\nတစ်ဖက်လူ လက်ခံသည်အထိ (သို့မဟုတ် သက်တမ်းကုန်သည်အထိ) စောင့်ဆိုင်းပေးပါ။")
@@ -224,7 +223,6 @@ async def cmd_lucky_duel(message: types.Message):
 
     user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
 
-    # Owner မဟုတ်ပါက လက်ကျန်ငွေ ၃၅၀ ပြည့်ရမည်
     if not is_owner and user_data[3] - 50 < 300:
         await message.reply(f"❌ **ကစားရန် လက်ကျန်မလုံလောက်ပါ!**\nကစားပြီးပါက အနည်းဆုံး ၃၀၀ ကျပ် ကျန်ရမည်ဖြစ်၍ အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည် (လက်ရှိ: {user_data[3]} ကျပ်)။")
         return
@@ -249,7 +247,6 @@ async def cmd_lucky_duel(message: types.Message):
         "chat_id": message.chat.id
     }
 
-    # စက္ကန့် ၆၀ ပြည့်လျှင် Expire ဖြစ်ပြီး စာရင်းမှ ဖယ်ထုတ်မည်
     await asyncio.sleep(60)
     if challenge_id in active_duels:
         del active_duels[challenge_id]
@@ -296,7 +293,6 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
     await callback.answer()
 
-    # 🎲 Owner Buff (Owner နိုင်ခြေ ၆၇%)
     p1_is_owner = (challenger_id == OWNER_ID)
     p2_is_owner = (accepter.id == OWNER_ID)
 
@@ -338,8 +334,8 @@ def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
     redeem_url = f"https://t.me/{BOT_USERNAME}?start=bill"
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="ကံစမ်းမဲ လှည့်မည်", callback_data=f"spin_{user_id}")],
-        [InlineKeyboardButton(text="ဖုန်းဘေလ်တောင်းဆိုထားသောစာရင်း", callback_data=f"pending_{user_id}")],
-        [InlineKeyboardButton(text="ဖုန်းဘေလ် လဲလှည်မည်", url=redeem_url)]
+        [InlineKeyboardButton(text="လဲလှယ်တောင်းဆိုထားသောစာရင်း", callback_data=f"pending_{user_id}")],
+        [InlineKeyboardButton(text="ဖုန်းဘေလ် / Gift လဲလှယ်မည်", url=redeem_url)]
     ])
 
 async def auto_delete_idle_menu(chat_id: int, message_id: int, user_id: int, delay: int = 30):
@@ -434,7 +430,7 @@ async def handle_spin(callback: types.CallbackQuery):
         msg = await bot.send_message(
             chat_id=chat_id,
             message_thread_id=thread_id,
-            text=f"⚠️ {callback.from_user.first_name} သင့်အကောင့်ထဲတွင် Bill ၃,၀၀၀ ကျပ် ပြည့်နေပါပြီ။ ဖုန်းဘေလ် အရင်လဲလှယ်ပြီးမှ ပြန်လှည့်ပါ။"
+            text=f"⚠️ {callback.from_user.first_name} သင့်အကောင့်ထဲတွင် Bill ၃,၀၀၀ ကျပ် ပြည့်နေပါပြီ။ ဖုန်းဘေလ် သို့မဟုတ် Gift အရင်လဲလှယ်ပြီးမှ ပြန်လှည့်ပါ။"
         )
         await asyncio.sleep(15)
         try:
@@ -500,34 +496,118 @@ async def handle_pending_btn(callback: types.CallbackQuery):
 
     pending_list = await db.get_user_pending_redemptions(orig_user_id)
     if not pending_list:
-        await callback.answer("လွှဲရန်ကျန်ရှိသော ဖုန်းဘေလ်တောင်းဆိုမှု မရှိသေးပါ။", show_alert=True)
+        await callback.answer("လွှဲရန်ကျန်ရှိသော တောင်းဆိုမှု မရှိသေးပါ။", show_alert=True)
         return
 
-    text = "⏳ ဖုန်းဘေလ်တောင်းဆိုထားသောစာရင်း:\n\n"
-    for op, ph, dt in pending_list:
-        text += f"• {op} ({ph})\n"
+    text = "⏳ လဲလှယ်တောင်းဆိုထားသောစာရင်း:\n\n"
+    for op, ph, dt, r_type in pending_list:
+        if r_type == "gift":
+            text += f"• 🧸 ဝက်ဝံရုပ် Gift ({ph})\n"
+        else:
+            text += f"• 📱 {op} ({ph})\n"
     await callback.answer(text, show_alert=True)
 
-# --- /bill Command ---
+# ==========================================================
+# 📱 /bill Command (ဖုန်းဘေလ် နှင့် 🧸 ဝက်ဝံရုပ် Gift ရွေးချယ်မှု)
+# ==========================================================
 @dp.message(Command("bill"))
 @dp.message(Command("start"), F.text.startswith("/start bill"))
 async def bill_cmd(message: types.Message, state: FSMContext):
     if message.chat.type != "private":
-        await message.reply("ဖုန်းဘေလ် လဲလှယ်ရန် Bot ၏ Private Chat တွင် /bill ဟု ရိုက်ပေးပါ။")
+        await message.reply("ဆုငွေလဲလှယ်ရန် Bot ၏ Private Chat တွင် /bill ဟု ရိုက်ပေးပါ။")
         return
 
     user = await db.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
-    if user[3] < 1000:
-        await message.reply(f"သင့်တွင် Bill 1,000 မပြည့်သေးပါ (လက်ရှိ: {user[3]} ကျပ်)။")
+    user_coins = user[3]
+
+    if user_coins < 1000:
+        await message.reply(f"သင့်တွင် အနည်းဆုံး Bill 1,000 မပြည့်သေးပါ (လက်ရှိ: {user_coins} ကျပ်)။")
         return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="MPT", callback_data="op_MPT"), InlineKeyboardButton(text="ATOM", callback_data="op_ATOM")],
-        [InlineKeyboardButton(text="Ooredoo", callback_data="op_Ooredoo"), InlineKeyboardButton(text="Mytel", callback_data="op_Mytel")]
+        [InlineKeyboardButton(text="📱 ဖုန်းဘေလ် ၁,၀၀၀ ကျပ် လဲမည်", callback_data="redeem_type_bill")],
+        [InlineKeyboardButton(text="🧸 ဝက်ဝံရုပ် Profile Gift (၁,၅၀၀ ကျပ်)", callback_data="redeem_type_bear")]
     ])
-    await message.reply("သင့်ဖုန်း အော်ပရေတာကို ရွေးချယ်ပါ:", reply_markup=kb)
-    await state.set_state(RedeemState.waiting_for_operator)
+    await message.reply(f"သင့်လက်ကျန်ငွေ: **{user_coins} ကျပ်**\n\nလဲလှယ်လိုသော ဆုအမျိုးအစားကို ရွေးချယ်ပါ:", reply_markup=kb, parse_mode="Markdown")
+    await state.set_state(RedeemState.waiting_for_reward_choice)
 
+# --- ဆုအမျိုးအစား ရွေးချယ်မှု Callback ---
+@dp.callback_query(RedeemState.waiting_for_reward_choice, lambda c: c.data.startswith("redeem_type_"))
+async def handle_reward_choice(callback: types.CallbackQuery, state: FSMContext):
+    choice = callback.data.replace("redeem_type_", "")
+    user = await db.get_or_create_user(callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
+    user_coins = user[3]
+
+    if choice == "bear":
+        # 🧸 ဝက်ဝံရုပ်အတွက် ၁,၅၀၀ ကျပ် ပြည့်မပြည့် စစ်ဆေးခြင်း
+        if user_coins < 1500:
+            await callback.answer("ဝက်ဝံရုပ် Gift လဲရန် အနည်းဆုံး ၁,၅၀၀ ကျပ် လိုအပ်ပါသည်!", show_alert=True)
+            return
+
+        await callback.message.edit_text(
+            "🧸 **ဝက်ဝံရုပ် Profile Gift လဲလှယ်ခြင်း (၁,၅၀၀ ကျပ်)**\n\n"
+            "လက်ဆောင် ပို့ပေးရမည့် သင့် **Telegram Username** ကို ရိုက်ပို့ပေးပါ:\n"
+            "(ဥပမာ - `@username` ဟု စာပို့ပေးပါ)"
+        )
+        await state.set_state(RedeemState.waiting_for_gift_username)
+
+    else:
+        # 📱 ဖုန်းဘေလ် (၁,၀၀၀ ကျပ်)
+        if user_coins < 1000:
+            await callback.answer("ဖုန်းဘေလ်လဲရန် အနည်းဆုံး ၁,၀၀၀ ကျပ် လိုအပ်ပါသည်!", show_alert=True)
+            return
+
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="MPT", callback_data="op_MPT"), InlineKeyboardButton(text="ATOM", callback_data="op_ATOM")],
+            [InlineKeyboardButton(text="Ooredoo", callback_data="op_Ooredoo"), InlineKeyboardButton(text="Mytel", callback_data="op_Mytel")]
+        ])
+        await callback.message.edit_text("သင့်ဖုန်း အော်ပရေတာကို ရွေးချယ်ပါ:", reply_markup=kb)
+        await state.set_state(RedeemState.waiting_for_operator)
+
+# --- 🧸 ဝက်ဝံရုပ် Username လက်ခံခြင်း ---
+@dp.message(RedeemState.waiting_for_gift_username)
+async def submit_gift_username(message: types.Message, state: FSMContext):
+    target_un = message.text.strip()
+    if not target_un.startswith("@"):
+        target_un = f"@{target_un}"
+
+    user = await db.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    if user[3] < 1500:
+        await message.reply("လက်ကျန်ငွေ မလုံလောက်တော့ပါ။")
+        await state.clear()
+        return
+
+    # ၁,၅၀၀ ကျပ် နှုတ်ယူခြင်း
+    await db.add_coins(message.from_user.id, -1500)
+    redemption_id = await db.create_redemption(message.from_user.id, "Profile Gift", target_un, reward_type="gift")
+
+    if ADMIN_LOG_GROUP_ID != 0:
+        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Gift ပို့ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
+        ])
+        admin_log = (
+            f"🔔 [🧸 ဝက်ဝံရုပ် Gift လဲလှယ်မှု အော်ဒါအသစ်]\n\n"
+            f"အကောင့်: {message.from_user.first_name} (`{message.from_user.id}`)\n"
+            f"လက်ဆောင်အမျိုးအစား: ဝက်ဝံရုပ် Profile Gift\n"
+            f"ပို့ပေးရမည့် Username: {target_un}\n"
+            f"ကုန်ကျစရိတ်: 1,500 Bill\n"
+            f"အခြေအနေ: ⏳ Pending\n"
+            f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        )
+        try:
+            await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log, reply_markup=admin_kb)
+        except Exception:
+            pass
+
+    await message.reply(
+        f"✅ **တောင်းဆိုမှု အောင်မြင်ပါသည်!**\n\n"
+        f"🧸 ဆု: ဝက်ဝံရုပ် Profile Gift\n"
+        f"👤 ပို့ပေးရမည့် အကောင့်: {target_un}\n\n"
+        f"Admin မှ စစ်ဆေး၍ သင့် Profile သို့ ဝက်ဝံရုပ် လက်ဆောင် ပို့ပေးပါလိမ့်မည်။"
+    )
+    await state.clear()
+
+# --- 📱 ဖုန်းဘေလ် Operator ရွေးချယ်ခြင်း ---
 @dp.callback_query(RedeemState.waiting_for_operator, lambda c: c.data.startswith("op_"))
 async def select_operator(callback: types.CallbackQuery, state: FSMContext):
     op = callback.data.split("_")[1]
@@ -535,21 +615,29 @@ async def select_operator(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"အော်ပရေတာ: {op}\n\nဘေလ်ထည့်လိုသော ဖုန်းနံပါတ်ကို ရိုက်ပို့ပေးပါ:")
     await state.set_state(RedeemState.waiting_for_phone)
 
+# --- 📱 ဖုန်းဘေလ် ဖုန်းနံပါတ် လက်ခံခြင်း ---
 @dp.message(RedeemState.waiting_for_phone)
 async def submit_phone(message: types.Message, state: FSMContext):
     phone = message.text.strip()
     data = await state.get_data()
     operator = data.get("operator")
 
+    user = await db.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    if user[3] < 1000:
+        await message.reply("လက်ကျန်ငွေ မလုံလောက်တော့ပါ။")
+        await state.clear()
+        return
+
+    # ၁,၀၀၀ ကျပ် နှုတ်ယူခြင်း
     await db.add_coins(message.from_user.id, -1000)
-    redemption_id = await db.create_redemption(message.from_user.id, operator, phone)
+    redemption_id = await db.create_redemption(message.from_user.id, operator, phone, reward_type="bill")
 
     if ADMIN_LOG_GROUP_ID != 0:
         admin_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ ဖြည့်ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
         ])
         admin_log = (
-            f"🔔 [ဖုန်းဘေလ် လဲလှယ်မှု အော်ဒါအသစ်]\n\n"
+            f"🔔 [📱 ဖုန်းဘေလ် လဲလှယ်မှု အော်ဒါအသစ်]\n\n"
             f"အကောင့်: {message.from_user.first_name} (`{message.from_user.id}`)\n"
             f"အော်ပရေတာ: {operator}\n"
             f"ဖုန်းနံပါတ်: `{phone}`\n"
@@ -564,6 +652,9 @@ async def submit_phone(message: types.Message, state: FSMContext):
     await message.reply("တောင်းဆိုမှု အောင်မြင်ပါသည်။ Admin မှ စစ်ဆေး၍ ဖုန်းဘေလ် ဖြည့်ပေးပါလိမ့်မည်။")
     await state.clear()
 
+# ==========================================================
+# 👑 Admin Approve Handler (Bill & Gift နှစ်မျိုးစလုံး အတွက်)
+# ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("approve_"))
 async def handle_approve_btn(callback: types.CallbackQuery):
     if int(callback.from_user.id) != OWNER_ID:
@@ -576,30 +667,52 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         await callback.answer("ပြီးစီးပြီးဖြစ်သည် သို့မဟုတ် မှတ်တမ်းမရှိပါ!", show_alert=True)
         return
 
-    uid, operator, phone, _ = res
+    uid, operator, phone, _, r_type = res
     user_info = await db.get_or_create_user(uid, "", "")
     user_name = user_info[2] or "User"
 
-    updated_text = (
-        f"✅ [ဘေလ်ဖြည့်ပြီးပါပြီ]\n\n"
-        f"အကောင့်: {user_name} (`{uid}`)\n"
-        f"အော်ပရေတာ: {operator}\n"
-        f"ဖုန်းနံပါတ်: `{phone}`\n"
-        f"ပမာဏ: ၁,၀၀၀ ကျပ်\n"
-        f"အခြေအနေ: ဖြည့်သွင်းပြီးစီး"
-    )
-    await callback.message.edit_text(updated_text)
-    await callback.answer("ဘေလ်ဖြည့်ပြီးကြောင်း မှတ်တမ်းတင်ပြီးပါပြီ။")
+    if r_type == "gift":
+        updated_text = (
+            f"✅ [🧸 ဝက်ဝံရုပ် Gift ပို့ပြီးပါပြီ]\n\n"
+            f"အကောင့်: {user_name} (`{uid}`)\n"
+            f"လက်ဆောင်: ဝက်ဝံရုပ် Profile Gift\n"
+            f"Username: {phone}\n"
+            f"ပမာဏ: ၁,၅၀၀ ကျပ်\n"
+            f"အခြေအနေ: ပေးပို့ပြီးစီး"
+        )
+        user_notify = f"🎉 ဂုဏ်ယူပါတယ်! သင်တောင်းဆိုထားသော 🧸 ဝက်ဝံရုပ် Profile Gift ကို {phone} သို့ ပို့ပေးပြီးပါပြီ!"
+        announce_text = f"🎉 ဂုဏ်ယူပါတယ်! {user_name} သို့ 🧸 ဝက်ဝံရုပ် Profile Gift ပေးပို့ပြီးပါပြီ!"
+    else:
+        updated_text = (
+            f"✅ [📱 ဘေလ်ဖြည့်ပြီးပါပြီ]\n\n"
+            f"အကောင့်: {user_name} (`{uid}`)\n"
+            f"အော်ပရေတာ: {operator}\n"
+            f"ဖုန်းနံပါတ်: `{phone}`\n"
+            f"ပမာဏ: ၁,၀၀၀ ကျပ်\n"
+            f"အခြေအနေ: ဖြည့်သွင်းပြီးစီး"
+        )
+        user_notify = f"✅ သင့်ထံသို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ။ ကျေးဇူးတင်ပါသည်!"
+        announce_text = f"🎉 ဂုဏ်ယူပါတယ်! {user_name} သို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ!"
 
+    await callback.message.edit_text(updated_text)
+    await callback.answer("မှတ်တမ်းတင်ပြီးပါပြီ။")
+
+    # Group ထဲ အသိပေးကြေညာခြင်း
     if SPIN_GROUP_ID != 0 and SPIN_TOPIC_ID != 0:
         try:
             await bot.send_message(
                 chat_id=SPIN_GROUP_ID,
                 message_thread_id=SPIN_TOPIC_ID,
-                text=f"🎉 ဂုဏ်ယူပါတယ်! {user_name} သို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ!"
+                text=announce_text
             )
         except Exception:
             pass
+
+    # User ထံ DM ပို့ခြင်း
+    try:
+        await bot.send_message(chat_id=uid, text=user_notify)
+    except Exception:
+        pass
 
 # ==========================================================
 # 👑 Owner Commands
