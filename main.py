@@ -115,6 +115,69 @@ async def expire_drop_code_task(drop_code: str, delay: int = 180):
             chat_stats["drop_type"] = None
             chat_stats["drop_message_id"] = None
 
+# ==========================================================
+# 🃏 Shan Koe Mee Helper Functions
+# ==========================================================
+SUITS = ["♣️", "♦️", "♥️", "♠️"]
+RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+
+def get_card_value(rank: str) -> int:
+    if rank == "A":
+        return 1
+    if rank in ["10", "J", "Q", "K"]:
+        return 0
+    return int(rank)
+
+def draw_shan_hand(deck: list) -> dict:
+    hand = [deck.pop(), deck.pop()]
+    initial_score = (get_card_value(hand[0][0]) + get_card_value(hand[1][0])) % 10
+    
+    # ၇၊ ၈၊ ၉ မှတ် မဟုတ်ပါက ၃ ချပ်မြောက် ဖဲ ၁ ချပ် ထပ်ဆွဲသည်
+    if initial_score < 7:
+        hand.append(deck.pop())
+        
+    total_score = sum(get_card_value(c[0]) for c in hand) % 10
+    cards_display = " ".join([f"[{c[0]}{c[1]}]" for c in hand])
+    
+    title = f"{total_score} မှတ်"
+    if len(hand) == 2 and total_score == 9:
+        title = "🔥 ရှမ်းကိုး (၉)"
+    elif len(hand) == 2 and total_score == 8:
+        title = "⚡ ရှစ်ဒေါင်း (၈)"
+    elif total_score == 0:
+        title = "💀 ဘူး (၀)"
+        
+    return {
+        "cards": hand,
+        "display": cards_display,
+        "score": total_score,
+        "card_count": len(hand),
+        "title": title
+    }
+
+def compare_shan_hands(p1: dict, p2: dict) -> str:
+    # ၁။ ရမှတ် ယှဉ်ပြိုင်ခြင်း
+    if p1["score"] > p2["score"]:
+        return "p1"
+    if p2["score"] > p1["score"]:
+        return "p2"
+        
+    # ၂။ အမှတ်တူပါက ၂ ချပ်ဖြင့် ရသူက ၃ ချပ်သမားထက် သာသည်
+    if p1["card_count"] < p2["card_count"]:
+        return "p1"
+    if p2["card_count"] < p1["card_count"]:
+        return "p2"
+        
+    # ၃။ အမှတ်ရော ဖဲချပ်အရေအတွက်ပါ တူနေပါက အမြင့်ဆုံးဖဲချပ်ဖြင့် ရှင်းထုတ်သည်
+    def card_rank_val(card):
+        r_idx = RANKS.index(card[0])
+        s_idx = SUITS.index(card[1])
+        return (r_idx * 4) + s_idx
+
+    p1_max = max(card_rank_val(c) for c in p1["cards"])
+    p2_max = max(card_rank_val(c) for c in p2["cards"])
+    return "p1" if p1_max > p2_max else "p2"
+
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(LEFT | KICKED | RESTRICTED) >> (MEMBER | ADMINISTRATOR | CREATOR)))
 async def on_user_join(event: ChatMemberUpdated):
     if SPIN_GROUP_ID != 0 and event.chat.id != SPIN_GROUP_ID:
@@ -227,11 +290,11 @@ async def cmd_lucky_duel(message: types.Message):
 
     challenge_id = f"{challenger.id}_{int(time.time())}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⚔️ စိန်ခေါ်မှုကို လက်ခံမည် (၅၀ ကျပ်)", callback_data=f"accept_duel_{challenge_id}")]
+        [InlineKeyboardButton(text="🃏 ရှမ်းကိုးမီး စိန်ခေါ်မှု လက်ခံမည် (၅၀ ကျပ်)", callback_data=f"accept_duel_{challenge_id}")]
     ])
 
     sent_msg = await message.reply(
-        f"⚔️ **{challenger.first_name}** က ၅၀ ကျပ်တန် ခေါင်း/ပန်း စိန်ခေါ်ထားပါသည်!\n\n"
+        f"🃏 **{challenger.first_name}** က ၅၀ ကျပ်တန် ရှမ်းကိုးမီး စိန်ခေါ်ထားပါသည်!\n\n"
         f"💰 လောင်းကြေး: ၅၀ စီ (နိုင်သူ ၉၀ ကျပ်ရမည်, Fee ၁၀)\n"
         f"📌 *စည်းမျဉ်း: ကစားပြီးပါက အနည်းဆုံး ၃၀၀ ကျပ် ကျန်ရမည်*",
         reply_markup=kb,
@@ -284,29 +347,46 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         del active_duels[challenge_id]
 
     await callback.answer()
+    
+    chat_id = callback.message.chat.id
+    thread_id = callback.message.message_thread_id
+    
+    try:
+        await callback.message.edit_text(
+            f"🃏 **{challenger_name}** vs **{accepter.first_name}**\n\n"
+            f"🎴 ရှမ်းကိုးမီး ဖဲချပ်ဝေနေပါပြီ! ခဏစောင့်ပေးပါ...",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
 
-    p1_is_owner = (challenger_id == OWNER_ID)
-    p2_is_owner = (accepter.id == OWNER_ID)
+    # ၅၀/၅၀ သန့်သန့် ဖဲထုတ် shuffled ပြုလုပ်ခြင်း
+    deck = [(r, s) for r in RANKS for s in SUITS]
+    random.shuffle(deck)
 
-    if p1_is_owner:
-        winner_id = random.choices([challenger_id, accepter.id], weights=[67.0, 33.0], k=1)[0]
-    elif p2_is_owner:
-        winner_id = random.choices([accepter.id, challenger_id], weights=[67.0, 33.0], k=1)[0]
+    p1_hand = draw_shan_hand(deck)
+    p2_hand = draw_shan_hand(deck)
+
+    await asyncio.sleep(2.5)
+
+    winner = compare_shan_hands(p1_hand, p2_hand)
+    if winner == "p1":
+        winner_id, loser_id = challenger_id, accepter.id
+        winner_name, loser_name = challenger_name, accepter.first_name
     else:
-        winner_id = random.choice([challenger_id, accepter.id])
-
-    loser_id = accepter.id if winner_id == challenger_id else challenger_id
+        winner_id, loser_id = accepter.id, challenger_id
+        winner_name, loser_name = accepter.first_name, challenger_name
 
     w_coins, l_coins = await db.record_duel_match(winner_id, loser_id, challenger_id, accepter.id)
 
-    winner_name = challenger_name if winner_id == challenger_id else accepter.first_name
-    loser_name = accepter.first_name if winner_id == challenger_id else challenger_name
-
     result_text = (
-        f"🎲 **Lucky Duel ရလဒ် ထွက်ပေါ်ပါပြီ!**\n\n"
-        f"⚔️ **{challenger_name}** vs **{accepter.first_name}**\n"
+        f"🃏 **ရှမ်းကိုးမီးပွဲစဉ် ရလဒ် ထွက်ပေါ်ပါပြီ!**\n\n"
+        f"👤 **{challenger_name}**: {p1_hand['display']}\n"
+        f"👉 ရလဒ်: **{p1_hand['title']}**\n\n"
+        f"👤 **{accepter.first_name}**: {p2_hand['display']}\n"
+        f"👉 ရလဒ်: **{p2_hand['title']}**\n"
         f"━━━━━━━━━━━━━━\n"
-        f"🏆 အနိုင်ရရှိသူ: **{winner_name}** (+၄၀ ကျပ် အသားတင်ရ)\n"
+        f"👑 အနိုင်ရရှိသူ: **{winner_name}** (+၄၀ ကျပ်)\n"
         f"💀 ရှုံးနိမ့်သူ: **{loser_name}** (-၅၀ ကျပ်)\n"
         f"🏷️ စနစ်ကြေး (Fee): ၁၀ ကျပ်\n"
         f"━━━━━━━━━━━━━━\n"
@@ -315,9 +395,12 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     )
 
     try:
-        await callback.message.edit_text(result_text, parse_mode="Markdown")
+        await bot.send_message(chat_id=chat_id, message_thread_id=thread_id, text=result_text, parse_mode="Markdown")
     except Exception:
-        await bot.send_message(chat_id=callback.message.chat.id, text=result_text, parse_mode="Markdown")
+        try:
+            await bot.send_message(chat_id=chat_id, text=result_text, parse_mode="Markdown")
+        except Exception:
+            pass
 
 def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
     redeem_url = f"https://t.me/{BOT_USERNAME}?start=bill"
@@ -898,6 +981,9 @@ async def cmd_restore(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
+# ==========================================================
+# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
+# ==========================================================
 @dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
@@ -1014,6 +1100,9 @@ async def handle_chat_activity(message: types.Message):
         chat_stats["drop_message_id"] = drop_msg.message_id
         asyncio.create_task(expire_drop_code_task(drop_code, delay=180))
 
+# ==========================================================
+# 🚀 Startup
+# ==========================================================
 async def main():
     global BOT_USERNAME
     await db.init_db()
