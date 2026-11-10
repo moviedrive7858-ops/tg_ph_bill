@@ -20,10 +20,10 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))
 
-# 📌 User သတ်မှတ်ထားသော Group နှင့် Topic IDs
+# 📌 Group နှင့် Topic ID များ
 SPIN_GROUP_ID = -1002672484902
-GENERAL_TOPIC_ID = 1          # စာ ၁၀၀ ပြည့်လျှင် ကုတ်ချမည့် နေရာ
-SPIN_TOPIC_ID = 1328866       # /spin နှင့် /lucky ကစားမည့် နေရာ
+GENERAL_TOPIC_ID = 1          # စာ ၁၀၀ ပြည့်လျှင် ကုတ်ချမည့် General Topic
+SPIN_TOPIC_ID = 1328866       # User များ သုံးမည့် Spin / Game / Gift / ကြေညာချက်များ Topic
 
 if not BOT_TOKEN:
     raise ValueError("ERROR: Render Environment Variables တွင် BOT_TOKEN မသတ်မှတ်ရသေးပါ။")
@@ -52,7 +52,6 @@ chat_stats = {
 }
 
 def clean_name(name: str) -> str:
-    """Telegram HTML entity error မတက်စေရန် အမည်များကို escape လုပ်ခြင်း"""
     return html.escape(name or "User")
 
 def generate_drop_code() -> str:
@@ -192,6 +191,7 @@ async def on_user_join(event: ChatMemberUpdated):
     await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
     await db.record_invitation(inviter.id, new_member.id)
 
+# 👥 Member ဖိတ်ခေါ်မှု ပြည့်ပါက Spin Topic (1328866) ထဲတွင်သာ သီးသန့် ကြေညာပေးခြင်း
 @dp.message(F.new_chat_members)
 async def new_member_message_handler(message: types.Message):
     if message.chat.id != SPIN_GROUP_ID:
@@ -211,34 +211,45 @@ async def new_member_message_handler(message: types.Message):
         if awarded:
             inviter_mention = f"@{inviter.username}" if inviter.username else clean_name(inviter.first_name)
             try:
-                await message.reply(
-                    f"🎉 ဂုဏ်ယူပါတယ် <b>{inviter_mention}</b>!\n"
-                    f"Member ၂ ယောက် ဖိတ်ခေါ်မှု ပြည့်မြောက်သဖြင့် 🎟️ <b>Spin Token ၁ ခု</b> ရရှိပါသည်!",
+                await bot.send_message(
+                    chat_id=SPIN_GROUP_ID,
+                    message_thread_id=SPIN_TOPIC_ID,
+                    text=(
+                        f"🎉 ဂုဏ်ယူပါတယ် <b>{inviter_mention}</b>!\n"
+                        f"Member ၂ ယောက် ဖိတ်ခေါ်မှု ပြည့်မြောက်သဖြင့် 🎟️ <b>Spin Token ၁ ခု</b> ရရှိပါသည်!"
+                    ),
                     parse_mode="HTML"
                 )
             except Exception:
                 pass
 
 # ==========================================================
-# 🎁 Gift Transfer (/gf)
+# 🎁 Gift Transfer (/gf) - SPIN_TOPIC_ID တွင်သာ အလုပ်လုပ်သည်
 # ==========================================================
 @dp.message(Command("gf"))
 async def cmd_gift_coin(message: types.Message):
     if message.chat.id != SPIN_GROUP_ID:
         return
+    if message.message_thread_id != SPIN_TOPIC_ID:
+        return
 
     sender = message.from_user
     if not message.reply_to_message or not message.reply_to_message.from_user:
-        await message.reply("💡 <b>အသုံးပြုနည်း:</b>\nငွေလွှဲပေးလိုသူ၏ စာကို Reply ထောက်၍ <code>/gf</code> ဟု ရိုက်ပေးပါ။\n\n📌 <i>သတ်မှတ်ချက်: ၅၀ ကျပ် လွှဲမည် (Fee ၁၀ ကျပ် ဖြတ်မည်၊ အနည်းဆုံး ၃၀၀ ကျန်ရမည်)</i>", parse_mode="HTML")
+        await bot.send_message(
+            chat_id=message.chat.id,
+            message_thread_id=SPIN_TOPIC_ID,
+            text="💡 <b>အသုံးပြုနည်း:</b>\nငွေလွှဲပေးလိုသူ၏ စာကို Reply ထောက်၍ <code>/gf</code> ဟု ရိုက်ပေးပါ။\n\n📌 <i>သတ်မှတ်ချက်: ၅၀ ကျပ် လွှဲမည် (Fee ၁၀ ကျပ် ဖြတ်မည်၊ အနည်းဆုံး ၃၀၀ ကျန်ရမည်)</i>",
+            parse_mode="HTML"
+        )
         return
 
     receiver = message.reply_to_message.from_user
     if receiver.is_bot:
-        await message.reply("❌ Bot များထံသို့ ငွေလွှဲ၍ မရပါ။")
+        await bot.send_message(chat_id=message.chat.id, message_thread_id=SPIN_TOPIC_ID, text="❌ Bot များထံသို့ ငွေလွှဲ၍ မရပါ။")
         return
 
     if receiver.id == sender.id:
-        await message.reply("❌ မိမိအကောင့်ထံသို့ ပြန်လည် လွှဲယူ၍ မရပါ။")
+        await bot.send_message(chat_id=message.chat.id, message_thread_id=SPIN_TOPIC_ID, text="❌ မိမိအကောင့်ထံသို့ ပြန်လည် လွှဲယူ၍ မရပါ။")
         return
 
     await db.get_or_create_user(sender.id, sender.username, sender.first_name)
@@ -248,20 +259,24 @@ async def cmd_gift_coin(message: types.Message):
 
     if not success:
         if reason == "INSUFFICIENT_BALANCE":
-            await message.reply(f"❌ <b>ငွေလွှဲရန် လက်ကျန်မလုံလောက်ပါ!</b>\nလွှဲပြီးပါက အနည်းဆုံး ၃၀၀ ကျပ် ကျန်ရှိနေရပါမည် (လက်ရှိ: {balance} ကျပ်)။", parse_mode="HTML")
+            await bot.send_message(chat_id=message.chat.id, message_thread_id=SPIN_TOPIC_ID, text=f"❌ <b>ငွေလွှဲရန် လက်ကျန်မလုံလောက်ပါ!</b>\nလွှဲပြီးပါက အနည်းဆုံး ၃၀၀ ကျပ် ကျန်ရှိနေရပါမည် (လက်ရှိ: {balance} ကျပ်)။", parse_mode="HTML")
         elif reason == "COOLDOWN_48H":
-            await message.reply("❌ <b>၄၈ နာရီ မပြည့်သေးပါ!</b>\nဤ Member ထံသို့ ၄၈ နာရီအတွင်း ၁ ကြိမ်သာ ငွေလွှဲခွင့်ရှိပါသည်။", parse_mode="HTML")
+            await bot.send_message(chat_id=message.chat.id, message_thread_id=SPIN_TOPIC_ID, text="❌ <b>၄၈ နာရီ မပြည့်သေးပါ!</b>\nဤ Member ထံသို့ ၄၈ နာရီအတွင်း ၁ ကြိမ်သာ ငွေလွှဲခွင့်ရှိပါသည်။", parse_mode="HTML")
         elif reason == "DAILY_LIMIT_REACHED":
-            await message.reply("❌ <b>တစ်ရက် ကန့်သတ်ချက် ပြည့်သွားပါပြီ!</b>\nတစ်ရက်လျှင် မတူညီသော လူ ၃ ဦးထံသာ ငွေလွှဲခွင့်ရှိပါသည်။", parse_mode="HTML")
+            await bot.send_message(chat_id=message.chat.id, message_thread_id=SPIN_TOPIC_ID, text="❌ <b>တစ်ရက် ကန့်သတ်ချက် ပြည့်သွားပါပြီ!</b>\nတစ်ရက်လျှင် မတူညီသော လူ ၃ ဦးထံသာ ငွေလွှဲခွင့်ရှိပါသည်။", parse_mode="HTML")
         return
 
     r_mention = f"@{receiver.username}" if receiver.username else clean_name(receiver.first_name)
-    await message.reply(
-        f"🎁 <b>လက်ဆောင်ငွေလွှဲ အောင်မြင်ပါသည်!</b>\n\n"
-        f"👤 လက်ခံသူ: {r_mention}\n"
-        f"💰 လွှဲငွေ: ၅၀ ကျပ် (ရောက်ရှိ)\n"
-        f"🏷️ လွှဲခ (Fee): ၁၀ ကျပ်\n"
-        f"💳 သင့်လက်ကျန်: <b>{balance} ကျပ်</b>",
+    await bot.send_message(
+        chat_id=message.chat.id,
+        message_thread_id=SPIN_TOPIC_ID,
+        text=(
+            f"🎁 <b>လက်ဆောင်ငွေလွှဲ အောင်မြင်ပါသည်!</b>\n\n"
+            f"👤 လက်ခံသူ: {r_mention}\n"
+            f"💰 လွှဲငွေ: ၅၀ ကျပ် (ရောက်ရှိ)\n"
+            f"🏷️ လွှဲခ (Fee): ၁၀ ကျပ်\n"
+            f"💳 သင့်လက်ကျန်: <b>{balance} ကျပ်</b>"
+        ),
         parse_mode="HTML"
     )
 
@@ -281,7 +296,6 @@ async def expire_duel_task(challenge_id: str, sent_msg: types.Message):
 async def cmd_lucky_duel(message: types.Message):
     if message.chat.id != SPIN_GROUP_ID:
         return
-    # Topic စစ်ဆေးခြင်း (SPIN_TOPIC_ID 1328866 တွင်သာ ခွင့်ပြုသည်)
     if message.message_thread_id != SPIN_TOPIC_ID:
         return
 
@@ -290,13 +304,13 @@ async def cmd_lucky_duel(message: types.Message):
 
     for c_id, d_info in list(active_duels.items()):
         if d_info["challenger_id"] == challenger.id:
-            await message.reply("⚠️ <b>သင်ဖွင့်ထားသော စိန်ခေါ်မှု ရှိနေဆဲဖြစ်ပါသည်!</b>\nတစ်ဖက်လူ လက်ခံသည်အထိ စောင့်ဆိုင်းပေးပါ။", parse_mode="HTML")
+            await bot.send_message(chat_id=message.chat.id, message_thread_id=SPIN_TOPIC_ID, text="⚠️ <b>သင်ဖွင့်ထားသော စိန်ခေါ်မှု ရှိနေဆဲဖြစ်ပါသည်!</b>\nတစ်ဖက်လူ လက်ခံသည်အထိ စောင့်ဆိုင်းပေးပါ။", parse_mode="HTML")
             return
 
     user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
 
     if not is_owner and user_data[3] - 50 < 300:
-        await message.reply(f"❌ <b>ကစားရန် လက်ကျန်မလုံလောက်ပါ!</b>\nကစားပြီးပါက အနည်းဆုံး ၃၀၀ ကျပ် ကျန်ရမည်ဖြစ်၍ အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည် (လက်ရှိ: {user_data[3]} ကျပ်)။", parse_mode="HTML")
+        await bot.send_message(chat_id=message.chat.id, message_thread_id=SPIN_TOPIC_ID, text=f"❌ <b>ကစားရန် လက်ကျန်မလုံလောက်ပါ!</b>\nကစားပြီးပါက အနည်းဆုံး ၃၀၀ ကျပ် ကျန်ရမည်ဖြစ်၍ အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည် (လက်ရှိ: {user_data[3]} ကျပ်)။", parse_mode="HTML")
         return
 
     challenge_id = f"{challenger.id}_{int(time.time())}"
@@ -364,7 +378,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     await callback.answer()
     
     chat_id = callback.message.chat.id
-    thread_id = callback.message.message_thread_id or SPIN_TOPIC_ID
+    thread_id = SPIN_TOPIC_ID
     
     try:
         await callback.message.edit_text(
@@ -437,7 +451,6 @@ async def auto_delete_idle_menu(chat_id: int, message_id: int, user_id: int, del
 async def open_spin_menu(message: types.Message):
     if message.chat.id != SPIN_GROUP_ID:
         return
-    # Topic စစ်ဆေးခြင်း (SPIN_TOPIC_ID 1328866 တွင်သာ ခွင့်ပြုသည်)
     if message.message_thread_id != SPIN_TOPIC_ID:
         return
     
@@ -492,7 +505,7 @@ async def handle_spin(callback: types.CallbackQuery):
 
     await callback.answer()
     chat_id = callback.message.chat.id
-    thread_id = callback.message.message_thread_id or SPIN_TOPIC_ID
+    thread_id = SPIN_TOPIC_ID
 
     try:
         await callback.message.edit_text(f"🎰 <b>{clean_name(callback.from_user.first_name)}</b> ကံစမ်းမဲ လှည့်နေပါသည်...", parse_mode="HTML")
@@ -750,7 +763,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     await callback.message.edit_text(updated_text, parse_mode="HTML")
     await callback.answer("မှတ်တမ်းတင်ပြီးပါပြီ။")
 
-    # Announcement ကို SPIN_TOPIC_ID တွင် ကြေညာပေးခြင်း
+    # 📢 Announcement အားလုံးကို SPIN_TOPIC_ID (1328866) ထဲတွင်သာ ကြေညာပေးခြင်း
     try:
         await bot.send_message(
             chat_id=SPIN_GROUP_ID,
@@ -767,7 +780,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         pass
 
 # ==========================================================
-# 👑 Admin Commands
+# 👑 Admin Commands (Owner Only - Admin Group သို့မဟုတ် မည်သည့်နေရာမဆို အသုံးပြုနိုင်သည်)
 # ==========================================================
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
@@ -1045,7 +1058,7 @@ async def cmd_restore(message: types.Message):
 
 # ==========================================================
 # 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
-# GENERAL_TOPIC_ID = 1 တွင်သာ စာရေတွက်ပြီး Drop Code ချပေးသည်
+# GENERAL_TOPIC_ID = 1 (သို့မဟုတ် Root Chat) တွင်သာ စာရေတွက်ပြီး Drop Code ချပေးသည်
 # ==========================================================
 @dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
@@ -1062,8 +1075,8 @@ async def handle_chat_activity(message: types.Message):
         return
 
     text = message.text or ""
-    # General Topic ထဲသို့ တိုက်ရိုက် သွားစေရန် သတ်မှတ်ချက်
-    target_thread_id = GENERAL_TOPIC_ID
+    # General Topic အတွက် Thread ID error မတက်စေရန် None ဖြင့် စာပို့ပေးခြင်း
+    target_thread_id = None if msg_topic_id in [1, None] else msg_topic_id
 
     # 🎯 Drop Code အား Reply ပြန်၍ ကောက်ယူခြင်း
     if message.reply_to_message:
@@ -1140,7 +1153,7 @@ async def handle_chat_activity(message: types.Message):
         if trigger_drop:
             chat_stats["count"] = 0
 
-    # 🎁 စာကြောင်းရေ ၁၀၀ ပြည့်ပါက Drop ချပေးခြင်း
+    # 🎁 စာကြောင်းရေ ၁၀၀ ပြည့်ပါက General Topic တွင် Drop ချပေးခြင်း
     if trigger_drop:
         drop_code = generate_drop_code()
         d_type, _ = get_random_drop_reward()
