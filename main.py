@@ -215,9 +215,16 @@ async def cmd_lucky_duel(message: types.Message):
 
     challenger = message.from_user
     is_owner = (challenger.id == OWNER_ID)
+
+    # 🔒 စိန်ခေါ်စာ မဆော့ရသေးမီ နောက်ထပ် ထပ်ပို့မရအောင် တားဆီးခြင်း
+    for c_id, d_info in list(active_duels.items()):
+        if d_info["challenger_id"] == challenger.id:
+            await message.reply("⚠️ **သင်ဖွင့်ထားသော စိန်ခေါ်မှု ရှိနေဆဲဖြစ်ပါသည်!**\nတစ်ဖက်လူ လက်ခံသည်အထိ (သို့မဟုတ် သက်တမ်းကုန်သည်အထိ) စောင့်ဆိုင်းပေးပါ။")
+            return
+
     user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
 
-    # Owner မဟုတ်မှသာ လက်ကျန် ၃၅၀ ကျပ် စစ်ဆေးမည်
+    # Owner မဟုတ်ပါက လက်ကျန်ငွေ ၃၅၀ ပြည့်ရမည်
     if not is_owner and user_data[3] - 50 < 300:
         await message.reply(f"❌ **ကစားရန် လက်ကျန်မလုံလောက်ပါ!**\nကစားပြီးပါက အနည်းဆုံး ၃၀၀ ကျပ် ကျန်ရမည်ဖြစ်၍ အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည် (လက်ရှိ: {user_data[3]} ကျပ်)။")
         return
@@ -242,6 +249,7 @@ async def cmd_lucky_duel(message: types.Message):
         "chat_id": message.chat.id
     }
 
+    # စက္ကန့် ၆၀ ပြည့်လျှင် Expire ဖြစ်ပြီး စာရင်းမှ ဖယ်ထုတ်မည်
     await asyncio.sleep(60)
     if challenge_id in active_duels:
         del active_duels[challenge_id]
@@ -270,7 +278,6 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
         await db.get_or_create_user(accepter.id, accepter.username, accepter.first_name)
 
-        # သတ်မှတ်ချက်များ စစ်ဆေးခြင်း (Owner ID ပါ ထည့်သွင်းပေးထားသည်)
         eligible, reason = await db.check_duel_eligibility(challenger_id, accepter.id, owner_id=OWNER_ID)
         if not eligible:
             if reason == "P1_INSUFFICIENT":
@@ -289,7 +296,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
     await callback.answer()
 
-    # 🎲 ကံစမ်းခြင်း တွက်ချက်မှု (Owner Buff: Owner နိုင်ခြေ ၆၇%, ပြိုင်ဘက် ၃၃%)
+    # 🎲 Owner Buff (Owner နိုင်ခြေ ၆၇%)
     p1_is_owner = (challenger_id == OWNER_ID)
     p2_is_owner = (accepter.id == OWNER_ID)
 
@@ -693,6 +700,120 @@ async def cmd_givetoken(message: types.Message):
 
     new_t = await db.add_tokens(target_id, amount)
     await message.reply(f"🎟️ `{target_id}` သို့ +{amount} Token ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_t} ခု)")
+
+@dp.message(Command("deduct"))
+async def cmd_deduct(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+
+    args = message.text.split()
+    target_id = None
+    target_name = ""
+
+    if message.reply_to_message:
+        target_user = message.reply_to_message.from_user
+        if target_user.is_bot:
+            await message.reply("❌ Bot များထံမှ နှုတ်ယူ၍ မရနိုင်ပါ။")
+            return
+        target_id = target_user.id
+        target_name = target_user.first_name
+
+        if len(args) < 3:
+            await message.reply("⚠️ **Reply ဖြင့် နှုတ်နည်း:** `/deduct coin 500`", parse_mode="Markdown")
+            return
+        item_type = args[1].lower()
+        amount_str = args[2]
+    else:
+        if len(args) < 4:
+            await message.reply("⚠️ **ID/Username ဖြင့် သုံးနည်း:** `/deduct <ID/@username> <coin/token> <ပမာဏ>`", parse_mode="Markdown")
+            return
+        target_str = args[1]
+        item_type = args[2].lower()
+        amount_str = args[3]
+
+        if target_str.startswith("@") or not target_str.isdigit():
+            target_id = await db.get_user_by_username(target_str)
+            if not target_id:
+                await message.reply(f"❌ User **{target_str}** အား ရှာမတွေ့ပါ။", parse_mode="Markdown")
+                return
+            target_name = target_str
+        else:
+            target_id = int(target_str)
+            target_name = f"ID: `{target_id}`"
+
+    if not amount_str.isdigit() or int(amount_str) <= 0:
+        await message.reply("❌ ပမာဏသည် 0 ထက်ကြီးသော ဂဏန်း ဖြစ်ရပါမည်။")
+        return
+    amount = int(amount_str)
+
+    await db.get_or_create_user(target_id, "", target_name)
+
+    if item_type in ["coin", "coins", "bill", "money", "mmk"]:
+        new_balance = await db.deduct_coins(target_id, amount)
+        await message.reply(
+            f"✅ **{target_name}** ထံမှ ဘေလ် **{amount} MMK** နှုတ်ယူပြီးပါပြီ!\n💰 လက်ကျန်ငွေ: **{new_balance} MMK**",
+            parse_mode="Markdown"
+        )
+    elif item_type in ["token", "tokens"]:
+        new_tokens = await db.deduct_tokens(target_id, amount)
+        await message.reply(
+            f"✅ **{target_name}** ထံမှ Token **{amount} ခု** နှုတ်ယူပြီးပါပြီ!\n🎟️ လက်ကျန် Token: **{new_tokens} ခု**",
+            parse_mode="Markdown"
+        )
+    else:
+        await message.reply("❌ `coin` သို့မဟုတ် `token` ဟု ရွေးချယ်ပေးပါ။", parse_mode="Markdown")
+
+@dp.message(Command("backup"))
+async def cmd_manual_backup(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+    if not os.path.exists(db.DB_NAME):
+        await message.reply("❌ Database ဖိုင် မရှိသေးပါ။")
+        return
+
+    status_msg = await message.reply("⏳ Database ဖိုင်ကို ထုတ်ယူနေပါသည်...")
+    try:
+        now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        backup_file = FSInputFile(db.DB_NAME, filename=f"backup_manual_{now_str}.db")
+        
+        await message.reply_document(
+            document=backup_file,
+            caption=f"📦 **Update Database Backup**\n\n📅 အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n👤 ထုတ်ယူသူ: Owner"
+        )
+        await status_msg.delete()
+
+        if ADMIN_LOG_GROUP_ID != 0 and message.chat.id != ADMIN_LOG_GROUP_ID:
+            try:
+                await bot.send_document(
+                    chat_id=ADMIN_LOG_GROUP_ID,
+                    document=backup_file,
+                    caption=f"📦 **Update Database Backup (Auto-Log)**\n\n📅 အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+                )
+            except Exception:
+                pass
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Backup Error: {e}")
+
+@dp.message(Command("restore"))
+async def cmd_restore(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+    if not message.reply_to_message or not message.reply_to_message.document:
+        await message.reply("💡 Restore လုပ်ရန် Admin Group သို့ ရောက်နေသော `.db` ဖိုင်ကို Reply ထောက်၍ `/restore` ဟု ရိုက်ပေးပါ။")
+        return
+
+    doc = message.reply_to_message.document
+    if not doc.file_name.endswith(".db"):
+        await message.reply("❌ `.db` ဖိုင်အမျိုးအစားသာ ဖြစ်ရပါမည်။")
+        return
+
+    status_msg = await message.reply("⏳ Database ဖိုင်ကို ပြန်လည် ထည့်သွင်းနေပါသည်...")
+    try:
+        file_info = await bot.get_file(doc.file_id)
+        await bot.download_file(file_info.file_path, destination=db.DB_NAME)
+        await status_msg.edit_text("✅ **Database Restore အောင်မြင်ပါပြီ!**\n\nမှတ်တမ်းဟောင်းများ အားလုံး အောင်မြင်စွာ ပြန်လည် အစားထိုးပြီးပါပြီ။")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Restore Error: {e}")
 
 # ==========================================================
 # 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
