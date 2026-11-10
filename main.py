@@ -116,7 +116,7 @@ async def expire_drop_code_task(drop_code: str, delay: int = 180):
             chat_stats["drop_message_id"] = None
 
 # ==========================================================
-# 🃏 Shan Koe Mee Helper Functions (Safely Handled)
+# 🃏 Shan Koe Mee Helper Functions
 # ==========================================================
 SUITS = ["♣️", "♦️", "♥️", "♠️"]
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -1043,8 +1043,8 @@ async def handle_chat_activity(message: types.Message):
         return
 
     text = message.text or ""
-    # Forum Thread ID ကို တိကျစွာ ခွဲခြားသတ်မှတ်ခြင်း
-    target_thread_id = message.message_thread_id if getattr(message, "is_topic_message", False) else None
+    # Forum Thread ID ကို General Topic သို့မဟုတ် Thread အစစ်အတိုင်း တိကျစွာ ခွဲခြားသတ်မှတ်ခြင်း
+    target_thread_id = msg_topic_id if (msg_topic_id not in [1, None]) else None
 
     # 🎯 Drop Code အား Reply ပြန်၍ ကောက်ယူခြင်း
     if message.reply_to_message:
