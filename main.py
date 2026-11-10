@@ -7,7 +7,7 @@ import re
 from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, ChatMemberUpdatedFilter, KICKED, LEFT, RESTRICTED, MEMBER, ADMINISTRATOR, CREATOR
+from aiogram.filters import Command, ChatMemberUpdatedFilter, StateFilter, KICKED, LEFT, RESTRICTED, MEMBER, ADMINISTRATOR, CREATOR
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ChatMemberUpdated
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -15,9 +15,6 @@ from aiogram.fsm.storage.memory import MemoryStorage
 
 import database as db
 
-# ==========================================================
-# ⚙️ Settings & Credentials
-# ==========================================================
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
 SPIN_GROUP_ID = int(os.environ.get("SPIN_GROUP_ID", 0))
@@ -77,16 +74,12 @@ def is_valid_chat_message(text: str) -> bool:
         return False
     return True
 
-# 📌 FSM States for Bill & Bear Gift
 class RedeemState(StatesGroup):
     waiting_for_reward_choice = State()
     waiting_for_operator = State()
     waiting_for_phone = State()
     waiting_for_gift_username = State()
 
-# ==========================================================
-# 🌐 Render Dummy Web Server
-# ==========================================================
 async def health_check(request):
     return web.Response(text="Bot is running active!")
 
@@ -99,9 +92,6 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-# ==========================================================
-# 📦 Daily Database Auto-Backup
-# ==========================================================
 async def auto_backup_task():
     while True:
         await asyncio.sleep(86400)
@@ -117,9 +107,6 @@ async def auto_backup_task():
         except Exception as e:
             print(f"Auto Backup Error: {e}")
 
-# ==========================================================
-# 👥 Member Add စစ်ဆေးခြင်း
-# ==========================================================
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(LEFT | KICKED | RESTRICTED) >> (MEMBER | ADMINISTRATOR | CREATOR)))
 async def on_user_join(event: ChatMemberUpdated):
     if SPIN_GROUP_ID != 0 and event.chat.id != SPIN_GROUP_ID:
@@ -159,9 +146,6 @@ async def new_member_message_handler(message: types.Message):
             except Exception:
                 pass
 
-# ==========================================================
-# 🎁 Gift Command (/gf)
-# ==========================================================
 @dp.message(Command("gf"))
 async def cmd_gift_coin(message: types.Message):
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
@@ -205,9 +189,15 @@ async def cmd_gift_coin(message: types.Message):
         parse_mode="Markdown"
     )
 
-# ==========================================================
-# 🎲 Duel Command (/lucky)
-# ==========================================================
+async def expire_duel_task(challenge_id: int, sent_msg: types.Message):
+    await asyncio.sleep(60)
+    if challenge_id in active_duels:
+        del active_duels[challenge_id]
+        try:
+            await sent_msg.edit_text("⏳ **စိန်ခေါ်မှု သက်တမ်းကုန်ဆုံးသွားပါပြီ။**")
+        except Exception:
+            pass
+
 @dp.message(Command("lucky"))
 async def cmd_lucky_duel(message: types.Message):
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
@@ -247,13 +237,7 @@ async def cmd_lucky_duel(message: types.Message):
         "chat_id": message.chat.id
     }
 
-    await asyncio.sleep(60)
-    if challenge_id in active_duels:
-        del active_duels[challenge_id]
-        try:
-            await sent_msg.edit_text("⏳ **စိန်ခေါ်မှု သက်တမ်းကုန်ဆုံးသွားပါပြီ။**")
-        except Exception:
-            pass
+    asyncio.create_task(expire_duel_task(challenge_id, sent_msg))
 
 @dp.callback_query(lambda c: c.data.startswith("accept_duel_"))
 async def handle_accept_duel(callback: types.CallbackQuery):
@@ -327,9 +311,6 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     except Exception:
         await bot.send_message(chat_id=callback.message.chat.id, text=result_text, parse_mode="Markdown")
 
-# ==========================================================
-# 🎮 Lucky Spin Menu
-# ==========================================================
 def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
     redeem_url = f"https://t.me/{BOT_USERNAME}?start=bill"
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -508,7 +489,7 @@ async def handle_pending_btn(callback: types.CallbackQuery):
     await callback.answer(text, show_alert=True)
 
 # ==========================================================
-# 📱 /bill Command (ဖုန်းဘေလ် နှင့် 🧸 ဝက်ဝံရုပ် Gift ရွေးချယ်မှု)
+# 📱 /bill Command
 # ==========================================================
 @dp.message(Command("bill"))
 @dp.message(Command("start"), F.text.startswith("/start bill"))
@@ -531,7 +512,6 @@ async def bill_cmd(message: types.Message, state: FSMContext):
     await message.reply(f"သင့်လက်ကျန်ငွေ: **{user_coins} ကျပ်**\n\nလဲလှယ်လိုသော ဆုအမျိုးအစားကို ရွေးချယ်ပါ:", reply_markup=kb, parse_mode="Markdown")
     await state.set_state(RedeemState.waiting_for_reward_choice)
 
-# --- ဆုအမျိုးအစား ရွေးချယ်မှု Callback ---
 @dp.callback_query(RedeemState.waiting_for_reward_choice, lambda c: c.data.startswith("redeem_type_"))
 async def handle_reward_choice(callback: types.CallbackQuery, state: FSMContext):
     choice = callback.data.replace("redeem_type_", "")
@@ -539,7 +519,6 @@ async def handle_reward_choice(callback: types.CallbackQuery, state: FSMContext)
     user_coins = user[3]
 
     if choice == "bear":
-        # 🧸 ဝက်ဝံရုပ်အတွက် ၁,၅၀၀ ကျပ် ပြည့်မပြည့် စစ်ဆေးခြင်း
         if user_coins < 1500:
             await callback.answer("ဝက်ဝံရုပ် Gift လဲရန် အနည်းဆုံး ၁,၅၀၀ ကျပ် လိုအပ်ပါသည်!", show_alert=True)
             return
@@ -552,7 +531,6 @@ async def handle_reward_choice(callback: types.CallbackQuery, state: FSMContext)
         await state.set_state(RedeemState.waiting_for_gift_username)
 
     else:
-        # 📱 ဖုန်းဘေလ် (၁,၀၀၀ ကျပ်)
         if user_coins < 1000:
             await callback.answer("ဖုန်းဘေလ်လဲရန် အနည်းဆုံး ၁,၀၀၀ ကျပ် လိုအပ်ပါသည်!", show_alert=True)
             return
@@ -564,7 +542,6 @@ async def handle_reward_choice(callback: types.CallbackQuery, state: FSMContext)
         await callback.message.edit_text("သင့်ဖုန်း အော်ပရေတာကို ရွေးချယ်ပါ:", reply_markup=kb)
         await state.set_state(RedeemState.waiting_for_operator)
 
-# --- 🧸 ဝက်ဝံရုပ် Username လက်ခံခြင်း ---
 @dp.message(RedeemState.waiting_for_gift_username)
 async def submit_gift_username(message: types.Message, state: FSMContext):
     target_un = message.text.strip()
@@ -577,7 +554,6 @@ async def submit_gift_username(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    # ၁,၅၀၀ ကျပ် နှုတ်ယူခြင်း
     await db.add_coins(message.from_user.id, -1500)
     redemption_id = await db.create_redemption(message.from_user.id, "Profile Gift", target_un, reward_type="gift")
 
@@ -607,7 +583,6 @@ async def submit_gift_username(message: types.Message, state: FSMContext):
     )
     await state.clear()
 
-# --- 📱 ဖုန်းဘေလ် Operator ရွေးချယ်ခြင်း ---
 @dp.callback_query(RedeemState.waiting_for_operator, lambda c: c.data.startswith("op_"))
 async def select_operator(callback: types.CallbackQuery, state: FSMContext):
     op = callback.data.split("_")[1]
@@ -615,7 +590,6 @@ async def select_operator(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text(f"အော်ပရေတာ: {op}\n\nဘေလ်ထည့်လိုသော ဖုန်းနံပါတ်ကို ရိုက်ပို့ပေးပါ:")
     await state.set_state(RedeemState.waiting_for_phone)
 
-# --- 📱 ဖုန်းဘေလ် ဖုန်းနံပါတ် လက်ခံခြင်း ---
 @dp.message(RedeemState.waiting_for_phone)
 async def submit_phone(message: types.Message, state: FSMContext):
     phone = message.text.strip()
@@ -628,7 +602,6 @@ async def submit_phone(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    # ၁,၀၀၀ ကျပ် နှုတ်ယူခြင်း
     await db.add_coins(message.from_user.id, -1000)
     redemption_id = await db.create_redemption(message.from_user.id, operator, phone, reward_type="bill")
 
@@ -652,9 +625,6 @@ async def submit_phone(message: types.Message, state: FSMContext):
     await message.reply("တောင်းဆိုမှု အောင်မြင်ပါသည်။ Admin မှ စစ်ဆေး၍ ဖုန်းဘေလ် ဖြည့်ပေးပါလိမ့်မည်။")
     await state.clear()
 
-# ==========================================================
-# 👑 Admin Approve Handler (Bill & Gift နှစ်မျိုးစလုံး အတွက်)
-# ==========================================================
 @dp.callback_query(lambda c: c.data.startswith("approve_"))
 async def handle_approve_btn(callback: types.CallbackQuery):
     if int(callback.from_user.id) != OWNER_ID:
@@ -697,7 +667,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     await callback.message.edit_text(updated_text)
     await callback.answer("မှတ်တမ်းတင်ပြီးပါပြီ။")
 
-    # Group ထဲ အသိပေးကြေညာခြင်း
     if SPIN_GROUP_ID != 0 and SPIN_TOPIC_ID != 0:
         try:
             await bot.send_message(
@@ -708,15 +677,11 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         except Exception:
             pass
 
-    # User ထံ DM ပို့ခြင်း
     try:
         await bot.send_message(chat_id=uid, text=user_notify)
     except Exception:
         pass
 
-# ==========================================================
-# 👑 Owner Commands
-# ==========================================================
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -929,9 +894,9 @@ async def cmd_restore(message: types.Message):
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
 # ==========================================================
-# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
+# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ် (StateFilter(None) ဖြင့် ကာကွယ်ထားသည်)
 # ==========================================================
-@dp.message(F.text, ~F.text.startswith("/"))
+@dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
         return
