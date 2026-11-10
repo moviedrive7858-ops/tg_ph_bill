@@ -116,7 +116,7 @@ async def expire_drop_code_task(drop_code: str, delay: int = 180):
             chat_stats["drop_message_id"] = None
 
 # ==========================================================
-# 🃏 Shan Koe Mee Helper Functions
+# 🃏 Shan Koe Mee Helper Functions (Safely Handled)
 # ==========================================================
 SUITS = ["♣️", "♦️", "♥️", "♠️"]
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -135,8 +135,8 @@ def draw_shan_hand(deck: list) -> dict:
     if initial_score < 7:
         hand.append(deck.pop())
         
-    total_score = sum(get_card_value(c[0]) for c in hand) % 10
-    cards_display = " ".join([f"[{c[0]}{c[1]}]" for c in hand])
+    total_score = sum(get_card_value(card[0]) for card in hand) % 10
+    cards_display = " ".join([f"[{card[0]}{card[1]}]" for card in hand])
     
     title = f"{total_score} မှတ်"
     if len(hand) == 2 and total_score == 9:
@@ -214,7 +214,7 @@ async def new_member_message_handler(message: types.Message):
                 pass
 
 # ==========================================================
-# 🎁 Gift Transfer (/gf) - Thread-Safe
+# 🎁 Gift Transfer (/gf)
 # ==========================================================
 @dp.message(Command("gf"))
 async def cmd_gift_coin(message: types.Message):
@@ -476,7 +476,6 @@ async def handle_spin(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
     thread_id = callback.message.message_thread_id
 
-    # Telegram Flood Control ကာကွယ်ရန် မူလ message ကို တိုက်ရိုက် edit ခြင်း
     try:
         await callback.message.edit_text(f"🎰 {callback.from_user.first_name} ကံစမ်းမဲ လှည့်နေပါသည်...")
     except Exception:
@@ -1044,7 +1043,8 @@ async def handle_chat_activity(message: types.Message):
         return
 
     text = message.text or ""
-    target_thread_id = None if msg_topic_id in [1, None] else msg_topic_id
+    # Forum Thread ID ကို တိကျစွာ ခွဲခြားသတ်မှတ်ခြင်း
+    target_thread_id = message.message_thread_id if getattr(message, "is_topic_message", False) else None
 
     # 🎯 Drop Code အား Reply ပြန်၍ ကောက်ယူခြင်း
     if message.reply_to_message:
