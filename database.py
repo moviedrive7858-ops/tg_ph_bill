@@ -115,6 +115,7 @@ async def deduct_tokens(user_id: int, amount: int):
         return new_tokens
 
 async def record_invitation(inviter_id: int, new_member_id: int):
+    """Member ၂ ယောက်ပြည့်ပြီး Token ရမှသာ True ပြန်မည်၊ ၁ ယောက်သာရှိပါက False ပြန်မည်"""
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT user_id FROM invited_members WHERE user_id = ?", (new_member_id,))
         if await cursor.fetchone():
@@ -131,7 +132,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
             return True
             
         await db.commit()
-        return True
+        return False
 
 async def spin_wheel(user_id: int, is_owner: bool = False):
     today = datetime.now().strftime("%Y-%m-%d")
