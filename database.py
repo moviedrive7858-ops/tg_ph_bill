@@ -279,7 +279,6 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
 async def record_duel_match(winner_id: int, loser_id: int, player1_id: int, player2_id: int):
     today = datetime.now().strftime("%Y-%m-%d")
     async with get_db() as db:
-        # aiosqlite ၏ implicit transaction အတိုင်း standard execution ပြုလုပ်ခြင်း
         await db.execute("UPDATE users SET coins = coins + 40 WHERE user_id = ?", (winner_id,))
         await db.execute("UPDATE users SET coins = MAX(0, coins - 50) WHERE user_id = ?", (loser_id,))
         await db.execute(
