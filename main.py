@@ -107,6 +107,14 @@ async def auto_backup_task():
         except Exception as e:
             print(f"Auto Backup Error: {e}")
 
+async def expire_drop_code_task(drop_code: str, delay: int = 180):
+    await asyncio.sleep(delay)
+    async with claim_lock:
+        if chat_stats["active_drop_code"] == drop_code:
+            chat_stats["active_drop_code"] = None
+            chat_stats["drop_type"] = None
+            chat_stats["drop_message_id"] = None
+
 @dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(LEFT | KICKED | RESTRICTED) >> (MEMBER | ADMINISTRATOR | CREATOR)))
 async def on_user_join(event: ChatMemberUpdated):
     if SPIN_GROUP_ID != 0 and event.chat.id != SPIN_GROUP_ID:
@@ -189,7 +197,7 @@ async def cmd_gift_coin(message: types.Message):
         parse_mode="Markdown"
     )
 
-async def expire_duel_task(challenge_id: int, sent_msg: types.Message):
+async def expire_duel_task(challenge_id: str, sent_msg: types.Message):
     await asyncio.sleep(60)
     if challenge_id in active_duels:
         del active_duels[challenge_id]
@@ -488,9 +496,6 @@ async def handle_pending_btn(callback: types.CallbackQuery):
             text += f"• 📱 {op} ({ph})\n"
     await callback.answer(text, show_alert=True)
 
-# ==========================================================
-# 📱 /bill Command
-# ==========================================================
 @dp.message(Command("bill"))
 @dp.message(Command("start"), F.text.startswith("/start bill"))
 async def bill_cmd(message: types.Message, state: FSMContext):
@@ -893,9 +898,6 @@ async def cmd_restore(message: types.Message):
     except Exception as e:
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
-# ==========================================================
-# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ် (StateFilter(None) ဖြင့် ကာကွယ်ထားသည်)
-# ==========================================================
 @dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
@@ -1010,10 +1012,8 @@ async def handle_chat_activity(message: types.Message):
             )
 
         chat_stats["drop_message_id"] = drop_msg.message_id
+        asyncio.create_task(expire_drop_code_task(drop_code, delay=180))
 
-# ==========================================================
-# 🚀 Startup
-# ==========================================================
 async def main():
     global BOT_USERNAME
     await db.init_db()
