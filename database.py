@@ -10,7 +10,7 @@ DB_NAME = "bot_database.db"
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
 WEIGHTS = [52.0, 28.0, 9.5, 4.5, 3.0, 1.6, 1.0, 0.4]
 
-# ၃ ကြိမ်မြောက် Pity (၂ ကြိမ်ဆက် မပေါက်ပါက ၅၀၊ ၁၀၀၊ ၁၅၀ အထိ အာမခံ)
+# ၃ ကြိမ်မြောက် Pity (၂ ကြိမ်ဆက် မပေါက်ပါက ၅၀၊ ၁၀၀၊ ၁၅၀ အာမခံ)
 PITY_PRIZES = [50, 100, 150]
 PITY_WEIGHTS = [70.0, 22.0, 8.0]
 
@@ -35,10 +35,12 @@ async def init_db():
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # 📌 reward_type (bill သို့မဟုတ် gift) ပါဝင်သော Redemptions Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS redemptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER,
+                reward_type TEXT DEFAULT 'bill',
                 operator TEXT,
                 phone TEXT,
                 status TEXT DEFAULT 'pending',
@@ -185,7 +187,7 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         return prize, res
 
 # ==========================================================
-# 🎁 Gift Transfer Logic (/gf) - User အတိုင်း ပုံမှန်ကန့်သတ်ထားသည်
+# 🎁 Gift Transfer Logic (/gf)
 # ==========================================================
 async def transfer_gift_coins(sender_id: int, receiver_id: int):
     today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
@@ -226,7 +228,7 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         return True, "SUCCESS", new_sender_coins
 
 # ==========================================================
-# 🎲 Duel Logic (/lucky) - Owner အတွက် Unlimited
+# 🎲 Duel Logic (/lucky)
 # ==========================================================
 async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int = 0):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -239,13 +241,11 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
         p1_coins = r1[0] if r1 else 0
         p2_coins = r2[0] if r2 else 0
 
-        # Owner မဟုတ်မှသာ လက်ကျန် ၃၅၀ ကျပ် စစ်ဆေးမည်
         if player1_id != owner_id and p1_coins - 50 < 300:
             return False, "P1_INSUFFICIENT"
         if player2_id != owner_id and p2_coins - 50 < 300:
             return False, "P2_INSUFFICIENT"
 
-        # Owner မဟုတ်မှသာ တစ်ရက် ၅ ပွဲ စစ်ဆေးမည်
         if player1_id != owner_id:
             c = await db.execute("SELECT COUNT(*) FROM duels WHERE (player1_id = ? OR player2_id = ?) AND match_date = ?", (player1_id, player1_id, today))
             if (await c.fetchone())[0] >= 5:
@@ -256,7 +256,6 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
             if (await c.fetchone())[0] >= 5:
                 return False, "P2_DAILY_LIMIT"
 
-        # Owner မဟုတ်မှသာ ပြိုင်ဘက်တစ်ဦးနှင့် တစ်ရက် ၂ ပွဲ စစ်ဆေးမည် (Owner သည် မည်သူနှင့်မဆို စိတ်ကြိုက် ဆော့နိုင်သည်)
         if player1_id != owner_id and player2_id != owner_id:
             c = await db.execute(
                 """
@@ -288,18 +287,21 @@ async def record_duel_match(winner_id: int, loser_id: int, player1_id: int, play
         l_coins = (await c.fetchone())[0]
         return w_coins, l_coins
 
-async def create_redemption(user_id: int, operator: str, phone: str):
+# ==========================================================
+# 📱 /bill နှင့် 🧸 Profile Gift လဲလှယ်မှု မှတ်တမ်း
+# ==========================================================
+async def create_redemption(user_id: int, operator: str, phone: str, reward_type: str = "bill"):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
-            "INSERT INTO redemptions (user_id, operator, phone, status) VALUES (?, ?, ?, 'pending')",
-            (user_id, operator, phone)
+            "INSERT INTO redemptions (user_id, reward_type, operator, phone, status) VALUES (?, ?, ?, ?, 'pending')",
+            (user_id, reward_type, operator, phone)
         )
         await db.commit()
         return cursor.lastrowid
 
 async def approve_redemption(redemption_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
-        cursor = await db.execute("SELECT user_id, operator, phone, status FROM redemptions WHERE id = ?", (redemption_id,))
+        cursor = await db.execute("SELECT user_id, operator, phone, status, reward_type FROM redemptions WHERE id = ?", (redemption_id,))
         row = await cursor.fetchone()
         if row and row[3] == "pending":
             await db.execute("UPDATE redemptions SET status = 'approved' WHERE id = ?", (redemption_id,))
@@ -310,7 +312,7 @@ async def approve_redemption(redemption_id: int):
 async def get_user_pending_redemptions(user_id: int):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
-            "SELECT operator, phone, created_at FROM redemptions WHERE user_id = ? AND status = 'pending' ORDER BY id DESC",
+            "SELECT operator, phone, created_at, reward_type FROM redemptions WHERE user_id = ? AND status = 'pending' ORDER BY id DESC",
             (user_id,)
         )
         return await cursor.fetchall()
