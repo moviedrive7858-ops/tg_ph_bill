@@ -214,7 +214,7 @@ async def new_member_message_handler(message: types.Message):
                 pass
 
 # ==========================================================
-# 🎁 Gift Transfer (/gf)
+# 🎁 Gift Transfer (/gf) - Thread-Safe
 # ==========================================================
 @dp.message(Command("gf"))
 async def cmd_gift_coin(message: types.Message):
@@ -365,7 +365,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     p1_hand = draw_shan_hand(deck)
     p2_hand = draw_shan_hand(deck)
 
-    await asyncio.sleep(2.5)
+    await asyncio.sleep(2.0)
 
     winner = compare_shan_hands(p1_hand, p2_hand)
     if winner == "p1":
@@ -476,48 +476,27 @@ async def handle_spin(callback: types.CallbackQuery):
     chat_id = callback.message.chat.id
     thread_id = callback.message.message_thread_id
 
+    # Telegram Flood Control ကာကွယ်ရန် မူလ message ကို တိုက်ရိုက် edit ခြင်း
     try:
-        await callback.message.delete()
+        await callback.message.edit_text(f"🎰 {callback.from_user.first_name} ကံစမ်းမဲ လှည့်နေပါသည်...")
     except Exception:
         pass
-    user_active_menu.pop(orig_user_id, None)
 
-    temp_msg = await bot.send_message(
-        chat_id=chat_id,
-        message_thread_id=thread_id,
-        text=f"🎰 {callback.from_user.first_name} ကံစမ်းမဲ လှည့်နေပါသည်..."
-    )
-
-    await asyncio.sleep(2.5)
-    try:
-        await temp_msg.delete()
-    except Exception:
-        pass
+    await asyncio.sleep(2.0)
 
     result, data = await db.spin_wheel(orig_user_id, is_owner=is_owner)
+    user_active_menu.pop(orig_user_id, None)
 
     if result == "MAX_BALANCE_REACHED":
-        msg = await bot.send_message(
-            chat_id=chat_id,
-            message_thread_id=thread_id,
-            text=f"⚠️ {callback.from_user.first_name} သင့်အကောင့်ထဲတွင် Bill ၃,၀၀၀ ကျပ် ပြည့်နေပါပြီ။ ဖုန်းဘေလ် သို့မဟုတ် Gift အရင်လဲလှယ်ပြီးမှ ပြန်လှည့်ပါ။"
-        )
-        await asyncio.sleep(15)
         try:
-            await msg.delete()
+            await callback.message.edit_text(f"⚠️ {callback.from_user.first_name} သင့်အကောင့်ထဲတွင် Bill ၃,၀၀၀ ကျပ် ပြည့်နေပါပြီ။ ဖုန်းဘေလ် သို့မဟုတ် Gift အရင်လဲလှယ်ပြီးမှ ပြန်လှည့်ပါ။")
         except Exception:
             pass
         return
 
     if result == "NO_TOKEN":
-        msg = await bot.send_message(
-            chat_id=chat_id,
-            message_thread_id=thread_id,
-            text=f"{callback.from_user.first_name}\nSpin လှည့်ခွင့် မရှိတော့ပါ။ Group ထဲသို့ Contact မှ သူငယ်ချင်းများကို Add ပေးပါ။"
-        )
-        await asyncio.sleep(15)
         try:
-            await msg.delete()
+            await callback.message.edit_text(f"{callback.from_user.first_name}\nSpin လှည့်ခွင့် မရှိတော့ပါ။ Group ထဲသို့ Contact မှ သူငယ်ချင်းများကို Add ပေးပါ။")
         except Exception:
             pass
         return
@@ -537,25 +516,20 @@ async def handle_spin(callback: types.CallbackQuery):
             [InlineKeyboardButton(text="🔄 ထပ်မံလှည့်မည်", callback_data=f"spin_{orig_user_id}")]
         ])
 
-    sent_result = await bot.send_message(
-        chat_id=chat_id,
-        message_thread_id=thread_id,
-        text=result_display,
-        reply_markup=spin_again_kb
-    )
-
-    if result > 0:
-        await bot.send_message(
-            chat_id=chat_id,
-            message_thread_id=thread_id,
-            text=f"🎉 ဂုဏ်ယူပါတယ်! {callback.from_user.first_name} သည် **{result} Bill** ကံထူးသွားပါသည်!"
-        )
-
-    await asyncio.sleep(15)
     try:
-        await sent_result.delete()
+        await callback.message.edit_text(result_display, reply_markup=spin_again_kb)
     except Exception:
         pass
+
+    if result > 0:
+        try:
+            await bot.send_message(
+                chat_id=chat_id,
+                message_thread_id=thread_id,
+                text=f"🎉 ဂုဏ်ယူပါတယ်! {callback.from_user.first_name} သည် **{result} Bill** ကံထူးသွားပါသည်!"
+            )
+        except Exception:
+            pass
 
 @dp.callback_query(lambda c: c.data.startswith("pending_"))
 async def handle_pending_btn(callback: types.CallbackQuery):
@@ -783,7 +757,7 @@ async def cmd_top10(message: types.Message):
     await message.reply(text)
 
 # ==========================================================
-# 🔍 User Detail (/detail) - Reply / ID / @username
+# 🔍 User Detail (/detail)
 # ==========================================================
 @dp.message(Command("detail"))
 async def cmd_detail(message: types.Message):
@@ -826,7 +800,7 @@ async def cmd_detail(message: types.Message):
     )
 
 # ==========================================================
-# 🎁 Admin Give Bill (/givebill) - Reply / ID / @username
+# 🎁 Admin Give Bill (/givebill)
 # ==========================================================
 @dp.message(Command("givebill"))
 async def cmd_givebill(message: types.Message):
@@ -879,7 +853,7 @@ async def cmd_givebill(message: types.Message):
     await message.reply(f"🎁 **{display_name}** သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: **{new_c} ကျပ်**)", parse_mode="Markdown")
 
 # ==========================================================
-# 🎟️ Admin Give Token (/givetoken) - Reply / ID / @username
+# 🎟️ Admin Give Token (/givetoken)
 # ==========================================================
 @dp.message(Command("givetoken"))
 async def cmd_givetoken(message: types.Message):
@@ -932,7 +906,7 @@ async def cmd_givetoken(message: types.Message):
     await message.reply(f"🎟️ **{display_name}** သို့ +{amount} Token ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: **{new_t} ခု**)", parse_mode="Markdown")
 
 # ==========================================================
-# ✂️ Admin Deduct (/deduct) - Reply / ID / @username
+# ✂️ Admin Deduct (/deduct)
 # ==========================================================
 @dp.message(Command("deduct"))
 async def cmd_deduct(message: types.Message):
@@ -1134,24 +1108,28 @@ async def handle_chat_activity(message: types.Message):
     if not is_valid_chat_message(text):
         return
 
-    if chat_stats["last_user_id"] == user.id:
-        if chat_stats["user_consecutive_counts"] >= 2:
-            return
-        chat_stats["user_consecutive_counts"] += 1
-    else:
-        chat_stats["last_user_id"] = user.id
-        chat_stats["user_consecutive_counts"] = 1
+    async with claim_lock:
+        if chat_stats["last_user_id"] == user.id:
+            if chat_stats["user_consecutive_counts"] >= 2:
+                return
+            chat_stats["user_consecutive_counts"] += 1
+        else:
+            chat_stats["last_user_id"] = user.id
+            chat_stats["user_consecutive_counts"] = 1
 
-    chat_stats["count"] += 1
+        chat_stats["count"] += 1
+        trigger_drop = (chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None)
+        if trigger_drop:
+            chat_stats["count"] = 0
 
     # 🎁 စာကြောင်းရေ ၁၀၀ ပြည့်ပါက Drop ချပေးခြင်း
-    if chat_stats["count"] >= MESSAGE_TARGET and chat_stats["active_drop_code"] is None:
-        chat_stats["count"] = 0
+    if trigger_drop:
         drop_code = generate_drop_code()
         d_type, _ = get_random_drop_reward()
 
-        chat_stats["active_drop_code"] = drop_code
-        chat_stats["drop_type"] = d_type
+        async with claim_lock:
+            chat_stats["active_drop_code"] = drop_code
+            chat_stats["drop_type"] = d_type
 
         try:
             drop_msg = await bot.send_message(
