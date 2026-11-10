@@ -132,7 +132,6 @@ def draw_shan_hand(deck: list) -> dict:
     hand = [deck.pop(), deck.pop()]
     initial_score = (get_card_value(hand[0][0]) + get_card_value(hand[1][0])) % 10
     
-    # ၇၊ ၈၊ ၉ မှတ် မဟုတ်ပါက ၃ ချပ်မြောက် ဖဲ ၁ ချပ် ထပ်ဆွဲသည်
     if initial_score < 7:
         hand.append(deck.pop())
         
@@ -156,19 +155,16 @@ def draw_shan_hand(deck: list) -> dict:
     }
 
 def compare_shan_hands(p1: dict, p2: dict) -> str:
-    # ၁။ ရမှတ် ယှဉ်ပြိုင်ခြင်း
     if p1["score"] > p2["score"]:
         return "p1"
     if p2["score"] > p1["score"]:
         return "p2"
         
-    # ၂။ အမှတ်တူပါက ၂ ချပ်ဖြင့် ရသူက ၃ ချပ်သမားထက် သာသည်
     if p1["card_count"] < p2["card_count"]:
         return "p1"
     if p2["card_count"] < p1["card_count"]:
         return "p2"
         
-    # ၃။ အမှတ်ရော ဖဲချပ်အရေအတွက်ပါ တူနေပါက အမြင့်ဆုံးဖဲချပ်ဖြင့် ရှင်းထုတ်သည်
     def card_rank_val(card):
         r_idx = RANKS.index(card[0])
         s_idx = SUITS.index(card[1])
@@ -217,13 +213,16 @@ async def new_member_message_handler(message: types.Message):
             except Exception:
                 pass
 
+# ==========================================================
+# 🎁 Gift Transfer (/gf)
+# ==========================================================
 @dp.message(Command("gf"))
 async def cmd_gift_coin(message: types.Message):
     if SPIN_GROUP_ID != 0 and message.chat.id != SPIN_GROUP_ID:
         return
 
     sender = message.from_user
-    if not message.reply_to_message:
+    if not message.reply_to_message or not message.reply_to_message.from_user:
         await message.reply("💡 **အသုံးပြုနည်း:**\nငွေလွှဲပေးလိုသူ၏ စာကို Reply ထောက်၍ `/gf` ဟု ရိုက်ပေးပါ။\n\n📌 *သတ်မှတ်ချက်: ၅၀ ကျပ် လွှဲမည် (Fee ၁၀ ကျပ် ဖြတ်မည်၊ အနည်းဆုံး ၃၀၀ ကျန်ရမည်)*")
         return
 
@@ -360,7 +359,6 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     except Exception:
         pass
 
-    # ၅၀/၅၀ သန့်သန့် ဖဲထုတ် shuffled ပြုလုပ်ခြင်း
     deck = [(r, s) for r in RANKS for s in SUITS]
     random.shuffle(deck)
 
@@ -784,24 +782,32 @@ async def cmd_top10(message: types.Message):
         text += f"{i}. {u_str} — **{c} ကျပ်**\n"
     await message.reply(text)
 
+# ==========================================================
+# 🔍 User Detail (/detail) - Reply / ID / @username
+# ==========================================================
 @dp.message(Command("detail"))
 async def cmd_detail(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
         return
+
     target_id = None
-    if message.reply_to_message:
-        target_id = message.reply_to_message.from_user.id
+    target_user = None
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target_user = message.reply_to_message.from_user
+        target_id = target_user.id
+        await db.get_or_create_user(target_id, target_user.username, target_user.first_name)
     else:
         args = message.text.split()
         if len(args) > 1:
-            param = args[1]
+            param = args[1].strip()
             if param.isdigit():
                 target_id = int(param)
             elif param.startswith("@"):
                 target_id = await db.get_user_by_username(param)
 
     if not target_id:
-        await message.reply("💡 **အသုံးပြုနည်း:** `/detail @username` သို့မဟုတ် Reply ထောက်ပါ")
+        await message.reply("💡 **အသုံးပြုနည်း:** စာကို Reply ထောက်၍ `/detail` သို့မဟုတ် `/detail @username` / `/detail 12345678`")
         return
 
     data = await db.get_user_detail(target_id)
@@ -819,54 +825,115 @@ async def cmd_detail(message: types.Message):
         f"👥 Add ခဲ့သူ: **{inv_count} ယောက်**"
     )
 
+# ==========================================================
+# 🎁 Admin Give Bill (/givebill) - Reply / ID / @username
+# ==========================================================
 @dp.message(Command("givebill"))
 async def cmd_givebill(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
         return
+
     args = message.text.split()
-    target_id, amount = None, 0
-    if message.reply_to_message:
-        target_id = message.reply_to_message.from_user.id
-        if len(args) > 1 and args[1].isdigit():
-            amount = int(args[1])
-    elif len(args) > 2 and args[2].isdigit():
-        amount = int(args[2])
-        if args[1].isdigit():
-            target_id = int(args[1])
-        elif args[1].startswith("@"):
-            target_id = await db.get_user_by_username(args[1])
+    target_id = None
+    target_user = None
+    amount = 0
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target_user = message.reply_to_message.from_user
+        if target_user.is_bot:
+            await message.reply("❌ Bot များထံသို့ Bill ထည့်ပေး၍ မရပါ။")
+            return
+        target_id = target_user.id
+
+        for arg in args[1:]:
+            if arg.isdigit():
+                amount = int(arg)
+                break
+    elif len(args) >= 3:
+        target_param = args[1].strip()
+        amount_param = args[2].strip()
+
+        if amount_param.isdigit():
+            amount = int(amount_param)
+
+        if target_param.isdigit():
+            target_id = int(target_param)
+        elif target_param.startswith("@"):
+            target_id = await db.get_user_by_username(target_param)
 
     if not target_id or amount <= 0:
-        await message.reply("💡 `/givebill @username 50` သို့မဟုတ် Reply ထောက်၍ ပို့ပါ")
+        await message.reply(
+            "💡 **အသုံးပြုနည်း:**\n"
+            "• Reply ထောက်၍: `/givebill 50`\n"
+            "• ID/@username ဖြင့်: `/givebill @username 50` သို့မဟုတ် `/givebill 12345678 50`",
+            parse_mode="Markdown"
+        )
         return
 
-    new_c = await db.add_coins(target_id, amount)
-    await message.reply(f"🎁 `{target_id}` သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_c} ကျပ်)")
+    u_name = target_user.first_name if target_user else ""
+    u_uname = target_user.username if target_user else ""
+    await db.get_or_create_user(target_id, u_uname, u_name)
 
+    new_c = await db.add_coins(target_id, amount)
+    display_name = target_user.first_name if target_user else f"`{target_id}`"
+    await message.reply(f"🎁 **{display_name}** သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: **{new_c} ကျပ်**)", parse_mode="Markdown")
+
+# ==========================================================
+# 🎟️ Admin Give Token (/givetoken) - Reply / ID / @username
+# ==========================================================
 @dp.message(Command("givetoken"))
 async def cmd_givetoken(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
         return
+
     args = message.text.split()
-    target_id, amount = None, 0
-    if message.reply_to_message:
-        target_id = message.reply_to_message.from_user.id
-        if len(args) > 1 and args[1].isdigit():
-            amount = int(args[1])
-    elif len(args) > 2 and args[2].isdigit():
-        amount = int(args[2])
-        if args[1].isdigit():
-            target_id = int(args[1])
-        elif args[1].startswith("@"):
-            target_id = await db.get_user_by_username(args[1])
+    target_id = None
+    target_user = None
+    amount = 0
+
+    if message.reply_to_message and message.reply_to_message.from_user:
+        target_user = message.reply_to_message.from_user
+        if target_user.is_bot:
+            await message.reply("❌ Bot များထံသို့ Token ထည့်ပေး၍ မရပါ။")
+            return
+        target_id = target_user.id
+
+        for arg in args[1:]:
+            if arg.isdigit():
+                amount = int(arg)
+                break
+    elif len(args) >= 3:
+        target_param = args[1].strip()
+        amount_param = args[2].strip()
+
+        if amount_param.isdigit():
+            amount = int(amount_param)
+
+        if target_param.isdigit():
+            target_id = int(target_param)
+        elif target_param.startswith("@"):
+            target_id = await db.get_user_by_username(target_param)
 
     if not target_id or amount <= 0:
-        await message.reply("💡 `/givetoken @username 1` သို့မဟုတ် Reply ထောက်၍ ပို့ပါ")
+        await message.reply(
+            "💡 **အသုံးပြုနည်း:**\n"
+            "• Reply ထောက်၍: `/givetoken 1`\n"
+            "• ID/@username ဖြင့်: `/givetoken @username 1` သို့မဟုတ် `/givetoken 12345678 1`",
+            parse_mode="Markdown"
+        )
         return
 
-    new_t = await db.add_tokens(target_id, amount)
-    await message.reply(f"🎟️ `{target_id}` သို့ +{amount} Token ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_t} ခု)")
+    u_name = target_user.first_name if target_user else ""
+    u_uname = target_user.username if target_user else ""
+    await db.get_or_create_user(target_id, u_uname, u_name)
 
+    new_t = await db.add_tokens(target_id, amount)
+    display_name = target_user.first_name if target_user else f"`{target_id}`"
+    await message.reply(f"🎟️ **{display_name}** သို့ +{amount} Token ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: **{new_t} ခု**)", parse_mode="Markdown")
+
+# ==========================================================
+# ✂️ Admin Deduct (/deduct) - Reply / ID / @username
+# ==========================================================
 @dp.message(Command("deduct"))
 async def cmd_deduct(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -875,8 +942,10 @@ async def cmd_deduct(message: types.Message):
     args = message.text.split()
     target_id = None
     target_name = ""
+    item_type = None
+    amount = 0
 
-    if message.reply_to_message:
+    if message.reply_to_message and message.reply_to_message.from_user:
         target_user = message.reply_to_message.from_user
         if target_user.is_bot:
             await message.reply("❌ Bot များထံမှ နှုတ်ယူ၍ မရနိုင်ပါ။")
@@ -885,17 +954,19 @@ async def cmd_deduct(message: types.Message):
         target_name = target_user.first_name
 
         if len(args) < 3:
-            await message.reply("⚠️ **Reply ဖြင့် နှုတ်နည်း:** `/deduct coin 500`", parse_mode="Markdown")
+            await message.reply("⚠️ **Reply ဖြင့် နှုတ်နည်း:** `/deduct coin 50` သို့မဟုတ် `/deduct token 1`", parse_mode="Markdown")
             return
         item_type = args[1].lower()
-        amount_str = args[2]
+        if args[2].isdigit():
+            amount = int(args[2])
     else:
         if len(args) < 4:
             await message.reply("⚠️ **ID/Username ဖြင့် သုံးနည်း:** `/deduct <ID/@username> <coin/token> <ပမာဏ>`", parse_mode="Markdown")
             return
-        target_str = args[1]
+        target_str = args[1].strip()
         item_type = args[2].lower()
-        amount_str = args[3]
+        if args[3].isdigit():
+            amount = int(args[3])
 
         if target_str.startswith("@") or not target_str.isdigit():
             target_id = await db.get_user_by_username(target_str)
@@ -907,10 +978,9 @@ async def cmd_deduct(message: types.Message):
             target_id = int(target_str)
             target_name = f"ID: `{target_id}`"
 
-    if not amount_str.isdigit() or int(amount_str) <= 0:
+    if not target_id or amount <= 0:
         await message.reply("❌ ပမာဏသည် 0 ထက်ကြီးသော ဂဏန်း ဖြစ်ရပါမည်။")
         return
-    amount = int(amount_str)
 
     await db.get_or_create_user(target_id, "", target_name)
 
