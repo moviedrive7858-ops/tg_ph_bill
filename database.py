@@ -45,7 +45,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # 🎁 ငွေလွှဲမှတ်တမ်း Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transfers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -55,7 +54,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # 🎲 စိန်ခေါ်ပွဲမှတ်တမ်း Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS duels (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -187,21 +185,13 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         return prize, res
 
 # ==========================================================
-# 🎁 Gift Transfer Logic (/gf)
+# 🎁 Gift Transfer Logic (/gf) - User အတိုင်း ပုံမှန်ကန့်သတ်ထားသည်
 # ==========================================================
 async def transfer_gift_coins(sender_id: int, receiver_id: int):
-    """
-    စည်းမျဉ်းများ:
-    - ၅၀ ကျပ် လွှဲမည် (လွှဲသူ ၆၀ နှုတ်၊ လက်ခံသူ ၅၀ ရ၊ Fee ၁၀)
-    - လွှဲပြီးပါက အနည်းဆုံး ၃၀၀ ကျန်ရမည် (Coins >= 360)
-    - တစ်ရက် မတူညီသော ၃ ယောက်သာ လွှဲခွင့်ရှိမည်
-    - လွှဲပြီးသော အကောင့်ဆီ ၄၈ နာရီအတွင်း ထပ်မံ လွှဲခွင့်မရှိပါ
-    """
     today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
     two_days_ago = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
 
     async with aiosqlite.connect(DB_NAME) as db:
-        # ၁။ လက်ကျန်ငွေ စစ်ဆေးခြင်း
         c = await db.execute("SELECT coins FROM users WHERE user_id = ?", (sender_id,))
         row = await c.fetchone()
         sender_coins = row[0] if row else 0
@@ -209,7 +199,6 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         if sender_coins - 60 < 300:
             return False, "INSUFFICIENT_BALANCE", sender_coins
 
-        # ၂။ ၄၈ နာရီအတွင်း ဤလူဆီ လွှဲဖူးခြင်း ရှိ/မရှိ စစ်ဆေးခြင်း
         c = await db.execute(
             "SELECT COUNT(*) FROM transfers WHERE sender_id = ? AND receiver_id = ? AND created_at >= ?",
             (sender_id, receiver_id, two_days_ago)
@@ -217,7 +206,6 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         if (await c.fetchone())[0] > 0:
             return False, "COOLDOWN_48H", 0
 
-        # ၃။ ယနေ့ မတူညီသော ၃ ယောက် ပြည့်မပြည့် စစ်ဆေးခြင်း
         c = await db.execute(
             "SELECT COUNT(DISTINCT receiver_id) FROM transfers WHERE sender_id = ? AND created_at >= ?",
             (sender_id, today_start)
@@ -225,7 +213,6 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         if (await c.fetchone())[0] >= 3:
             return False, "DAILY_LIMIT_REACHED", 0
 
-        # ၄။ ငွေလွှဲပေးခြင်း
         await db.execute("UPDATE users SET coins = coins - 60 WHERE user_id = ?", (sender_id,))
         await db.execute("UPDATE users SET coins = coins + 50 WHERE user_id = ?", (receiver_id,))
         await db.execute(
@@ -239,19 +226,12 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         return True, "SUCCESS", new_sender_coins
 
 # ==========================================================
-# 🎲 Duel Logic (/lucky)
+# 🎲 Duel Logic (/lucky) - Owner အတွက် Unlimited
 # ==========================================================
-async def check_duel_eligibility(player1_id: int, player2_id: int):
-    """
-    စည်းမျဉ်းများ:
-    - အနည်းဆုံး ၃၀၀ ကျန်ရမည် (ကစားကြေး ၅၀ နှုတ်ပြီးပါက Coins >= 350)
-    - တစ်ရက်လျှင် ၅ ပွဲသာ
-    - ပြိုင်ဘက်တစ်ဦးနှင့် တစ်ရက်လျှင် ၂ ပွဲသာ
-    """
+async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int = 0):
     today = datetime.now().strftime("%Y-%m-%d")
 
     async with aiosqlite.connect(DB_NAME) as db:
-        # ၁။ လက်ကျန်ငွေ စစ်ဆေးခြင်း (၃၅၀ ကျပ်စီ ရှိရမည်)
         c1 = await db.execute("SELECT coins FROM users WHERE user_id = ?", (player1_id,))
         c2 = await db.execute("SELECT coins FROM users WHERE user_id = ?", (player2_id,))
         r1, r2 = await c1.fetchone(), await c2.fetchone()
@@ -259,36 +239,39 @@ async def check_duel_eligibility(player1_id: int, player2_id: int):
         p1_coins = r1[0] if r1 else 0
         p2_coins = r2[0] if r2 else 0
 
-        if p1_coins - 50 < 300:
+        # Owner မဟုတ်မှသာ လက်ကျန် ၃၅၀ ကျပ် စစ်ဆေးမည်
+        if player1_id != owner_id and p1_coins - 50 < 300:
             return False, "P1_INSUFFICIENT"
-        if p2_coins - 50 < 300:
+        if player2_id != owner_id and p2_coins - 50 < 300:
             return False, "P2_INSUFFICIENT"
 
-        # ၂။ Player တစ်ဦးချင်းစီ၏ ယနေ့ စုစုပေါင်းပွဲ စစ်ဆေးခြင်း (Max 5)
-        c = await db.execute("SELECT COUNT(*) FROM duels WHERE (player1_id = ? OR player2_id = ?) AND match_date = ?", (player1_id, player1_id, today))
-        if (await c.fetchone())[0] >= 5:
-            return False, "P1_DAILY_LIMIT"
+        # Owner မဟုတ်မှသာ တစ်ရက် ၅ ပွဲ စစ်ဆေးမည်
+        if player1_id != owner_id:
+            c = await db.execute("SELECT COUNT(*) FROM duels WHERE (player1_id = ? OR player2_id = ?) AND match_date = ?", (player1_id, player1_id, today))
+            if (await c.fetchone())[0] >= 5:
+                return False, "P1_DAILY_LIMIT"
 
-        c = await db.execute("SELECT COUNT(*) FROM duels WHERE (player1_id = ? OR player2_id = ?) AND match_date = ?", (player2_id, player2_id, today))
-        if (await c.fetchone())[0] >= 5:
-            return False, "P2_DAILY_LIMIT"
+        if player2_id != owner_id:
+            c = await db.execute("SELECT COUNT(*) FROM duels WHERE (player1_id = ? OR player2_id = ?) AND match_date = ?", (player2_id, player2_id, today))
+            if (await c.fetchone())[0] >= 5:
+                return False, "P2_DAILY_LIMIT"
 
-        # ၃။ အဆိုပါ ၂ ယောက် အချင်းချင်း ယနေ့ ပွဲအရေအတွက် စစ်ဆေးခြင်း (Max 2)
-        c = await db.execute(
-            """
-            SELECT COUNT(*) FROM duels 
-            WHERE ((player1_id = ? AND player2_id = ?) OR (player1_id = ? AND player2_id = ?))
-              AND match_date = ?
-            """,
-            (player1_id, player2_id, player2_id, player1_id, today)
-        )
-        if (await c.fetchone())[0] >= 2:
-            return False, "PAIR_DAILY_LIMIT"
+        # Owner မဟုတ်မှသာ ပြိုင်ဘက်တစ်ဦးနှင့် တစ်ရက် ၂ ပွဲ စစ်ဆေးမည် (Owner သည် မည်သူနှင့်မဆို စိတ်ကြိုက် ဆော့နိုင်သည်)
+        if player1_id != owner_id and player2_id != owner_id:
+            c = await db.execute(
+                """
+                SELECT COUNT(*) FROM duels 
+                WHERE ((player1_id = ? AND player2_id = ?) OR (player1_id = ? AND player2_id = ?))
+                  AND match_date = ?
+                """,
+                (player1_id, player2_id, player2_id, player1_id, today)
+            )
+            if (await c.fetchone())[0] >= 2:
+                return False, "PAIR_DAILY_LIMIT"
 
         return True, "ELIGIBLE"
 
 async def record_duel_match(winner_id: int, loser_id: int, player1_id: int, player2_id: int):
-    """နိုင်သူထံ ၄၀ အသားတင်တိုး (၅၀ + ၄၀ = ၉၀ ရ), ရှုံးသူထံ ၅၀ နှုတ်, Bot Fee ၁၀ ဖြတ်"""
     today = datetime.now().strftime("%Y-%m-%d")
     async with aiosqlite.connect(DB_NAME) as db:
         await db.execute("UPDATE users SET coins = coins + 40 WHERE user_id = ?", (winner_id,))
