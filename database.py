@@ -4,13 +4,9 @@ from datetime import datetime, timedelta
 
 DB_NAME = "bot_database.db"
 
-# ==========================================================
-# 🎰 ပေါက်နှုန်း သတ်မှတ်ချက်များ (Win Rate: 48% | မပေါက်နှုန်း: 52%)
-# ==========================================================
 PRIZES = [0, 50, 100, 150, 200, 300, 500, 1000]
 WEIGHTS = [52.0, 28.0, 9.5, 4.5, 3.0, 1.6, 1.0, 0.4]
 
-# ၃ ကြိမ်မြောက် Pity (၂ ကြိမ်ဆက် မပေါက်ပါက ၅၀၊ ၁၀၀၊ ၁၅၀ အာမခံ)
 PITY_PRIZES = [50, 100, 150]
 PITY_WEIGHTS = [70.0, 22.0, 8.0]
 
@@ -35,7 +31,6 @@ async def init_db():
                 joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # 📌 reward_type (bill သို့မဟုတ် gift) ပါဝင်သော Redemptions Table
         await db.execute("""
             CREATE TABLE IF NOT EXISTS redemptions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +42,12 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # Database ဟောင်းများတွင် reward_type column မရှိပါက အလိုအလျောက် ထည့်သွင်းခြင်း
+        try:
+            await db.execute("ALTER TABLE redemptions ADD COLUMN reward_type TEXT DEFAULT 'bill'")
+        except Exception:
+            pass
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transfers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -186,9 +187,6 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         res = await cursor.fetchone()
         return prize, res
 
-# ==========================================================
-# 🎁 Gift Transfer Logic (/gf)
-# ==========================================================
 async def transfer_gift_coins(sender_id: int, receiver_id: int):
     today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
     two_days_ago = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
@@ -227,9 +225,6 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         new_sender_coins = (await c.fetchone())[0]
         return True, "SUCCESS", new_sender_coins
 
-# ==========================================================
-# 🎲 Duel Logic (/lucky)
-# ==========================================================
 async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int = 0):
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -287,9 +282,6 @@ async def record_duel_match(winner_id: int, loser_id: int, player1_id: int, play
         l_coins = (await c.fetchone())[0]
         return w_coins, l_coins
 
-# ==========================================================
-# 📱 /bill နှင့် 🧸 Profile Gift လဲလှယ်မှု မှတ်တမ်း
-# ==========================================================
 async def create_redemption(user_id: int, operator: str, phone: str, reward_type: str = "bill"):
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute(
