@@ -42,7 +42,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # Database ဟောင်းများတွင် reward_type column မရှိပါက အလိုအလျောက် ထည့်သွင်းခြင်း
         try:
             await db.execute("ALTER TABLE redemptions ADD COLUMN reward_type TEXT DEFAULT 'bill'")
         except Exception:
@@ -158,6 +157,8 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             (user_id,)
         )
         user = await cursor.fetchone()
+        if not user:
+            return "NO_TOKEN", 0
         tokens, losses, coins = user
 
         if not is_owner and coins >= 3000:
@@ -204,16 +205,23 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
             (sender_id, receiver_id, two_days_ago)
         )
         if (await c.fetchone())[0] > 0:
-            return False, "COOLDOWN_48H", 0
+            return False, "COOLDOWN_48H", sender_coins
 
         c = await db.execute(
             "SELECT COUNT(DISTINCT receiver_id) FROM transfers WHERE sender_id = ? AND created_at >= ?",
             (sender_id, today_start)
         )
         if (await c.fetchone())[0] >= 3:
-            return False, "DAILY_LIMIT_REACHED", 0
+            return False, "DAILY_LIMIT_REACHED", sender_coins
 
-        await db.execute("UPDATE users SET coins = coins - 60 WHERE user_id = ?", (sender_id,))
+        # Atomic Balance Deduction with Guard
+        cursor = await db.execute(
+            "UPDATE users SET coins = coins - 60 WHERE user_id = ? AND coins >= 360",
+            (sender_id,)
+        )
+        if cursor.rowcount == 0:
+            return False, "INSUFFICIENT_BALANCE", sender_coins
+
         await db.execute("UPDATE users SET coins = coins + 50 WHERE user_id = ?", (receiver_id,))
         await db.execute(
             "INSERT INTO transfers (sender_id, receiver_id, amount) VALUES (?, ?, 50)",
@@ -325,7 +333,7 @@ async def get_user_detail(user_id: int):
         return user, inv_count
 
 async def get_user_by_username(username: str):
-    clean_un = username.lstrip("@")
+    clean_un = username.lstrip("@").strip()
     async with aiosqlite.connect(DB_NAME) as db:
         cursor = await db.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (clean_un,))
         row = await cursor.fetchone()
