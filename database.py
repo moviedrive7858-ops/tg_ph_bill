@@ -46,11 +46,6 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        try:
-            await db.execute("ALTER TABLE redemptions ADD COLUMN reward_type TEXT DEFAULT 'bill'")
-        except Exception:
-            pass
-
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transfers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -66,7 +61,7 @@ async def init_db():
                 player1_id INTEGER NOT NULL,
                 player2_id INTEGER NOT NULL,
                 winner_id INTEGER NOT NULL,
-                match_date TEXT NOT NULL
+                match_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         await db.commit()
@@ -92,7 +87,6 @@ async def get_or_create_user(user_id: int, username: str, first_name: str):
             (u_name, f_name, user_id)
         )
         await db.commit()
-
         cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return await cursor.fetchone()
 
@@ -147,6 +141,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
+        # ၂ ယောက်ပြည့်မှ တုံကင် ၁ ခု ပေးမည် (၃ ယောက်ဖြစ်ပါက မရသေးပါ)
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -158,10 +153,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
 async def spin_wheel(user_id: int, is_owner: bool = False):
     today = datetime.now().strftime("%Y-%m-%d")
     async with get_db() as db:
-        cursor = await db.execute(
-            "SELECT tokens, consecutive_losses, coins FROM users WHERE user_id = ?", 
-            (user_id,)
-        )
+        cursor = await db.execute("SELECT tokens, consecutive_losses, coins FROM users WHERE user_id = ?", (user_id,))
         user = await cursor.fetchone()
         if not user:
             return "NO_TOKEN", 0
@@ -203,7 +195,8 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         row = await c.fetchone()
         sender_coins = row[0] if row else 0
 
-        if sender_coins - 60 < 300:
+        # ပို့သူထံမှ ၅၀ နှုတ်ပြီးပါက အနည်းဆုံး ၃၀၀ ကျန်ရမည် (အနည်းဆုံး ၃၅၀ ရှိရမည်)
+        if sender_coins - 50 < 300:
             return False, "INSUFFICIENT_BALANCE", sender_coins
 
         c = await db.execute(
@@ -220,16 +213,17 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         if (await c.fetchone())[0] >= 3:
             return False, "DAILY_LIMIT_REACHED", sender_coins
 
+        # ၅၀ နှုတ်ပြီး လက်ခံသူထံသို့ ၄၀ ပေးမည်
         cursor = await db.execute(
-            "UPDATE users SET coins = coins - 60 WHERE user_id = ? AND coins >= 360",
+            "UPDATE users SET coins = coins - 50 WHERE user_id = ? AND coins >= 350",
             (sender_id,)
         )
         if cursor.rowcount == 0:
             return False, "INSUFFICIENT_BALANCE", sender_coins
 
-        await db.execute("UPDATE users SET coins = coins + 50 WHERE user_id = ?", (receiver_id,))
+        await db.execute("UPDATE users SET coins = coins + 40 WHERE user_id = ?", (receiver_id,))
         await db.execute(
-            "INSERT INTO transfers (sender_id, receiver_id, amount) VALUES (?, ?, 50)",
+            "INSERT INTO transfers (sender_id, receiver_id, amount) VALUES (?, ?, 40)",
             (sender_id, receiver_id)
         )
         await db.commit()
@@ -239,7 +233,7 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         return True, "SUCCESS", new_sender_coins
 
 async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int = 0):
-    today = datetime.now().strftime("%Y-%m-%d")
+    ten_mins_ago = (datetime.now() - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
 
     async with get_db() as db:
         c1 = await db.execute("SELECT coins FROM users WHERE user_id = ?", (player1_id,))
@@ -249,43 +243,38 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
         p1_coins = r1[0] if r1 else 0
         p2_coins = r2[0] if r2 else 0
 
+        # ကစားသူနှစ်ဦးစလုံး ၅၀ ကြေးဆော့ပြီးပါက ၃၀၀ အနည်းဆုံး ကျန်ရမည်
         if player1_id != owner_id and p1_coins - 50 < 300:
             return False, "P1_INSUFFICIENT"
         if player2_id != owner_id and p2_coins - 50 < 300:
             return False, "P2_INSUFFICIENT"
 
-        if player1_id != owner_id:
-            c = await db.execute("SELECT COUNT(*) FROM duels WHERE (player1_id = ? OR player2_id = ?) AND match_date = ?", (player1_id, player1_id, today))
-            if (await c.fetchone())[0] >= 5:
-                return False, "P1_DAILY_LIMIT"
-
-        if player2_id != owner_id:
-            c = await db.execute("SELECT COUNT(*) FROM duels WHERE (player1_id = ? OR player2_id = ?) AND match_date = ?", (player2_id, player2_id, today))
-            if (await c.fetchone())[0] >= 5:
-                return False, "P2_DAILY_LIMIT"
-
+        # တူညီသော Player ၂ ယောက်သည် ၃ ပွဲဆော့ပြီးပါက ၁၀ မိနစ် Cooldown စောင့်ရမည်
         if player1_id != owner_id and player2_id != owner_id:
             c = await db.execute(
                 """
-                SELECT COUNT(*) FROM duels 
+                SELECT match_time FROM duels 
                 WHERE ((player1_id = ? AND player2_id = ?) OR (player1_id = ? AND player2_id = ?))
-                  AND match_date = ?
+                ORDER BY id DESC LIMIT 3
                 """,
-                (player1_id, player2_id, player2_id, player1_id, today)
+                (player1_id, player2_id, player2_id, player1_id)
             )
-            if (await c.fetchone())[0] >= 2:
-                return False, "PAIR_DAILY_LIMIT"
+            rows = await c.fetchall()
+            if len(rows) == 3:
+                last_match_time = rows[0][0]
+                if last_match_time > ten_mins_ago:
+                    return False, "PAIR_COOLDOWN_10M"
 
         return True, "ELIGIBLE"
 
 async def record_duel_match(winner_id: int, loser_id: int, player1_id: int, player2_id: int):
-    today = datetime.now().strftime("%Y-%m-%d")
+    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with get_db() as db:
         await db.execute("UPDATE users SET coins = coins + 40 WHERE user_id = ?", (winner_id,))
         await db.execute("UPDATE users SET coins = MAX(0, coins - 50) WHERE user_id = ?", (loser_id,))
         await db.execute(
-            "INSERT INTO duels (player1_id, player2_id, winner_id, match_date) VALUES (?, ?, ?, ?)",
-            (player1_id, player2_id, winner_id, today)
+            "INSERT INTO duels (player1_id, player2_id, winner_id, match_time) VALUES (?, ?, ?, ?)",
+            (player1_id, player2_id, winner_id, now_str)
         )
         await db.commit()
 
