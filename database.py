@@ -72,13 +72,15 @@ async def init_db():
         await db.commit()
 
 async def get_or_create_user(user_id: int, username: str, first_name: str):
+    u_name = username or ""
+    f_name = first_name or "User"
     async with get_db() as db:
         await db.execute(
             """
             INSERT OR IGNORE INTO users (user_id, username, first_name) 
             VALUES (?, ?, ?)
             """,
-            (user_id, username or "", first_name or "")
+            (user_id, u_name, f_name)
         )
         await db.execute(
             """
@@ -87,7 +89,7 @@ async def get_or_create_user(user_id: int, username: str, first_name: str):
                 first_name = COALESCE(NULLIF(?, ''), first_name)
             WHERE user_id = ?
             """,
-            (username or "", first_name or "", user_id)
+            (u_name, f_name, user_id)
         )
         await db.commit()
 
@@ -140,7 +142,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         if await cursor.fetchone():
             return False
         
-        await db.execute("INSERT OR IGNORE INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
+        await db.execute("INSERT INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
         
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
