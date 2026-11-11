@@ -219,7 +219,6 @@ async def cmd_gift_coin(message: types.Message):
             pass
         return
 
-    # နာမည်အမှန် သို့မဟုတ် Mention သေချာဖော်ပြခြင်း
     s_mention = f"@{sender.username}" if sender.username else f'<a href="tg://user?id={sender.id}">{clean_name(sender.first_name)}</a>'
     r_mention = f"@{receiver.username}" if receiver.username else f'<a href="tg://user?id={receiver.id}">{clean_name(receiver.first_name)}</a>'
 
@@ -263,7 +262,6 @@ async def finish_duel(match_id: str):
     p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
     deck = duel["deck"]
 
-    # ၄ မှတ်နှင့်အောက်ဖြစ်ပါက အော်တိုဆွဲပေးမည်
     if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4:
         p1_hand.append(deck.pop())
     if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4:
@@ -500,7 +498,6 @@ async def handle_hit_card(callback: types.CallbackQuery):
         cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in hand])
         await callback.answer(f"📥 ဖဲ ၁ ချပ်ဆွဲလိုက်ပါပြီ!\nလက်ရှိ: {cards_str} ({get_hand_title(hand)})", show_alert=True)
 
-    # ၂ ယောက်လုံး ရွေးချယ်ပြီးပါက ချက်ချင်း ဖဲလှန်ပေးခြင်း
     if duel["p1_action"] and duel["p2_action"]:
         async with duel_lock:
             await finish_duel(match_id)
@@ -526,7 +523,6 @@ async def handle_stand_card(callback: types.CallbackQuery):
     duel[f"{player_key}_action"] = True
     await callback.answer("✋ နေလိုက်ပါပြီ (ဖဲမဆွဲပါ)။", show_alert=True)
 
-    # ၂ ယောက်လုံး ရွေးချယ်ပြီးပါက ချက်ချင်း ဖဲလှန်ပေးခြင်း
     if duel["p1_action"] and duel["p2_action"]:
         async with duel_lock:
             await finish_duel(match_id)
@@ -826,8 +822,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         return
 
     uid, operator, phone, _, r_type = res
-    
-    # 📌 Database မှ User အချက်အလက်ကို တိုက်ရိုက်ဆွဲထုတ်၍ နာမည်အမှန်ဖော်ပြခြင်း
     user_detail = await db.get_user_detail(uid)
     if user_detail:
         u_data = user_detail[0]
@@ -899,7 +893,7 @@ async def cmd_detail(message: types.Message):
                 target_id = await db.get_user_by_username(param)
 
     if not target_id:
-        await message.reply("💡 <code>/detail @username</code> သို့မဟုတ် စာကို Reply ထောက်၍ ရိုက်ပါ။", parse_mode="HTML")
+        await message.reply("💡 <b>အသုံးပြုနည်း:</b> <code>/detail @username</code> သို့မဟုတ် စာကို Reply ထောက်၍ ရိုက်ပါ။", parse_mode="HTML")
         return
 
     data = await db.get_user_detail(target_id)
@@ -908,9 +902,10 @@ async def cmd_detail(message: types.Message):
         return
 
     u, inv_count = data
+    u_display = f"@{u[1]}" if u[1] else clean_name(u[2])
     await message.reply(
         f"🔍 <b>အကောင့် စစ်ဆေးချက်:</b>\n\n"
-        f"👤 အမည်: {clean_name(u[2])} (@{u[1] or 'none'})\n"
+        f"👤 အမည်: {clean_name(u[2])} ({u_display})\n"
         f"🆔 User ID: <code>{u[0]}</code>\n"
         f"💰 Bill: <b>{u[3]} ကျပ်</b> | 🎟️ Token: <b>{u[4]} ခု</b>\n"
         f"👥 Add ခဲ့သူ: <b>{inv_count} ယောက်</b>",
@@ -930,6 +925,7 @@ async def cmd_givebill(message: types.Message):
     if message.reply_to_message and message.reply_to_message.from_user:
         target_user = message.reply_to_message.from_user
         if target_user.is_bot:
+            await message.reply("❌ Bot များသို့ ထည့်ပေး၍ မရပါ။")
             return
         target_id = target_user.id
         for arg in args[1:]:
@@ -947,11 +943,16 @@ async def cmd_givebill(message: types.Message):
             target_id = await db.get_user_by_username(target_param)
 
     if not target_id or amount <= 0:
+        await message.reply("💡 <b>အသုံးပြုနည်း:</b> <code>/givebill 50</code> (Reply ဖြင့်) သို့မဟုတ် <code>/givebill @username 50</code>", parse_mode="HTML")
         return
 
-    await db.get_or_create_user(target_id, "", "")
+    u_name = target_user.first_name if target_user else ""
+    u_uname = target_user.username if target_user else ""
+    await db.get_or_create_user(target_id, u_uname, u_name)
+
     new_c = await db.add_coins(target_id, amount)
-    await message.reply(f"🎁 <code>{target_id}</code> သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_c} ကျပ်)")
+    display_name = clean_name(target_user.first_name) if target_user else f"<code>{target_id}</code>"
+    await message.reply(f"🎁 <b>{display_name}</b> သို့ +{amount} Bill ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: <b>{new_c} ကျပ်</b>)", parse_mode="HTML")
 
 @dp.message(Command("givetoken"))
 async def cmd_givetoken(message: types.Message):
@@ -960,11 +961,13 @@ async def cmd_givetoken(message: types.Message):
 
     args = message.text.split()
     target_id = None
+    target_user = None
     amount = 0
 
     if message.reply_to_message and message.reply_to_message.from_user:
         target_user = message.reply_to_message.from_user
         if target_user.is_bot:
+            await message.reply("❌ Bot များသို့ ထည့်ပေး၍ မရပါ။")
             return
         target_id = target_user.id
         for arg in args[1:]:
@@ -982,11 +985,16 @@ async def cmd_givetoken(message: types.Message):
             target_id = await db.get_user_by_username(target_param)
 
     if not target_id or amount <= 0:
+        await message.reply("💡 <b>အသုံးပြုနည်း:</b> <code>/givetoken 1</code> (Reply ဖြင့်) သို့မဟုတ် <code>/givetoken @username 1</code>", parse_mode="HTML")
         return
 
-    await db.get_or_create_user(target_id, "", "")
+    u_name = target_user.first_name if target_user else ""
+    u_uname = target_user.username if target_user else ""
+    await db.get_or_create_user(target_id, u_uname, u_name)
+
     new_t = await db.add_tokens(target_id, amount)
-    await message.reply(f"🎟️ <code>{target_id}</code> သို့ +{amount} Token ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: {new_t} ခု)")
+    display_name = clean_name(target_user.first_name) if target_user else f"<code>{target_id}</code>"
+    await message.reply(f"🎟️ <b>{display_name}</b> သို့ +{amount} Token ထည့်ပေးလိုက်ပါပြီ! (လက်ရှိ: <b>{new_t} ခု</b>)", parse_mode="HTML")
 
 @dp.message(Command("deduct"))
 async def cmd_deduct(message: types.Message):
