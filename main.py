@@ -82,7 +82,6 @@ def is_valid_chat_message(text: str) -> bool:
     return True
 
 def is_general_topic(message: types.Message) -> bool:
-    # Spin Topic မဟုတ်လျှင် General Topic (သို့မဟုတ် Root Topic) အဖြစ် သတ်မှတ်သည်
     return message.message_thread_id != SPIN_TOPIC_ID
 
 class RedeemState(StatesGroup):
@@ -168,6 +167,9 @@ def get_card_value(rank: str) -> int:
 def calculate_hand_score(hand: list) -> int:
     return sum(get_card_value(card[0]) for card in hand) % 10
 
+def is_natural_win(hand: list) -> bool:
+    return len(hand) == 2 and calculate_hand_score(hand) in [8, 9]
+
 def get_hand_title(hand: list) -> str:
     total_score = calculate_hand_score(hand)
     if len(hand) == 2 and total_score == 9:
@@ -212,17 +214,7 @@ async def new_member_message_handler(message: types.Message):
         if new_member.is_bot or inviter.id == new_member.id:
             continue
         await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
-        rewarded = await db.record_invitation(inviter.id, new_member.id)
-        if rewarded:
-            try:
-                await bot.send_message(
-                    chat_id=SPIN_GROUP_ID,
-                    message_thread_id=SPIN_TOPIC_ID,
-                    text=f"🎟️ <b>{clean_name(inviter.first_name)}</b> သည် သူငယ်ချင်းအသစ်ကို ဖိတ်ခေါ်နိုင်ခဲ့၍ Spin Token ၁ ခု ရရှိပါသည်!",
-                    parse_mode="HTML"
-                )
-            except Exception:
-                pass
+        await db.record_invitation(inviter.id, new_member.id)
 
 # ==========================================================
 # 🎁 Gift Transfer (/gf) - General Topic
@@ -235,7 +227,7 @@ async def cmd_gift_coin(message: types.Message):
     sender = message.from_user
     if not message.reply_to_message or not message.reply_to_message.from_user:
         help_msg = await message.reply("💡 <b>အသုံးပြုနည်း:</b> လက်ဆောင်ပေးလိုသူ၏ စာကို Reply ထောက်ပြီး <code>/gf</code> ဟု ရိုက်ပေးပါ။", parse_mode="HTML")
-        await asyncio.sleep(5)
+        await asyncio.sleep(4)
         try:
             await help_msg.delete()
             await message.delete()
@@ -259,7 +251,7 @@ async def cmd_gift_coin(message: types.Message):
             err_msg = await message.reply("❌ ဤ Member ထံသို့ ၄၈ နာရီအတွင်း ၁ ကြိမ်သာ ငွေလွှဲခွင့်ရှိပါသည်။")
         else:
             err_msg = await message.reply("❌ တစ်ရက်လျှင် လူ ၃ ဦးထံသာ လွှဲခွင့်ရှိပါသည်။")
-        await asyncio.sleep(5)
+        await asyncio.sleep(4)
         try:
             await err_msg.delete()
             await message.delete()
@@ -287,7 +279,7 @@ async def cmd_gift_coin(message: types.Message):
 # ==========================================================
 # 🃏 Shan Koe Mee Duel (/lucky) - General Topic
 # ==========================================================
-async def auto_delete_duel_result(chat_id: int, message_id: int, delay: int = 30):
+async def auto_delete_message(chat_id: int, message_id: int, delay: int = 30):
     await asyncio.sleep(delay)
     try:
         await bot.delete_message(chat_id=chat_id, message_id=message_id)
@@ -304,6 +296,7 @@ async def auto_resolve_duel(match_id: str):
         pass
 
 async def finish_duel(match_id: str):
+    global last_duel_created_time
     duel = active_duels.pop(match_id, None)
     if not duel:
         return
@@ -318,9 +311,9 @@ async def finish_duel(match_id: str):
     deck = duel["deck"]
     thread_id = duel.get("thread_id")
 
-    if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
+    if not is_natural_win(p1_hand) and len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
         p1_hand.append(deck.pop())
-    if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
+    if not is_natural_win(p2_hand) and len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
         p2_hand.append(deck.pop())
 
     duel["p1_action"] = True
@@ -344,6 +337,8 @@ async def finish_duel(match_id: str):
     except Exception:
         pass
 
+    await asyncio.sleep(1)
+
     p1_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p1_hand])
     p2_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p2_hand])
 
@@ -360,7 +355,7 @@ async def finish_duel(match_id: str):
             text=score_board_text,
             parse_mode="HTML"
         )
-        asyncio.create_task(auto_delete_duel_result(duel["chat_id"], score_msg.message_id, delay=30))
+        asyncio.create_task(auto_delete_message(duel["chat_id"], score_msg.message_id, delay=30))
     except Exception as e:
         print(f"Send Duel Cards Error: {e}")
 
@@ -378,6 +373,8 @@ async def finish_duel(match_id: str):
     except Exception as e:
         print(f"Send Duel Announce Error: {e}")
 
+    last_duel_created_time = time.time()
+
 @dp.message(Command("lucky"))
 async def cmd_lucky_duel(message: types.Message):
     global last_duel_created_time
@@ -390,10 +387,10 @@ async def cmd_lucky_duel(message: types.Message):
 
     now = time.time()
     if not is_owner:
-        if now - last_duel_created_time < 15:
-            rem = int(15 - (now - last_duel_created_time))
-            warn = await message.reply(f"⏳ ကစားပွဲတစ်ခု ဖွင့်ထားပြီးဖြစ်ပါသည် (သို့မဟုတ် ခဏစောင့်ပါဦး: {rem} စက္ကန့်)")
-            await asyncio.sleep(4)
+        if now - last_duel_created_time < 7:
+            rem = int(7 - (now - last_duel_created_time))
+            warn = await message.reply(f"⏳ ခဏစောင့်ပါဦး ({rem} စက္ကန့် ကျန်ပါသည်)")
+            await asyncio.sleep(3)
             try:
                 await warn.delete()
                 await message.delete()
@@ -404,7 +401,7 @@ async def cmd_lucky_duel(message: types.Message):
     for c_id, d_info in list(active_duels.items()):
         if d_info.get("challenger_id") == challenger.id:
             msg = await message.reply("⚠️ သင်ဖွင့်ထားသော ကစားပွဲ ရှိနေဆဲဖြစ်ပါသည်!")
-            await asyncio.sleep(4)
+            await asyncio.sleep(3)
             try:
                 await msg.delete()
                 await message.delete()
@@ -415,7 +412,7 @@ async def cmd_lucky_duel(message: types.Message):
     user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
     if not is_owner and user_data[3] - 50 < 300:
         msg = await message.reply("❌ လက်ကျန်ငွေ ၃၀၀ အောက်ရောက်မည်ဖြစ်၍ ကစားခွင့်မပြုပါ (အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည်)။")
-        await asyncio.sleep(5)
+        await asyncio.sleep(4)
         try:
             await msg.delete()
             await message.delete()
@@ -423,7 +420,6 @@ async def cmd_lucky_duel(message: types.Message):
             pass
         return
 
-    last_duel_created_time = now
     challenge_id = f"{challenger.id}_{int(time.time())}"
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🃏 စိန်ခေါ်မှု လက်ခံမည် (၅၀ ကျပ်)", callback_data=f"accept_duel_{challenge_id}")]
@@ -486,8 +482,8 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     p2_hand = [deck.pop(), deck.pop()]
     match_id = f"m_{challenger_id}_{accepter.id}_{int(time.time())}"
 
-    p1_auto = calculate_hand_score(p1_hand) >= 7
-    p2_auto = calculate_hand_score(p2_hand) >= 7
+    p1_natural = is_natural_win(p1_hand)
+    p2_natural = is_natural_win(p2_hand)
 
     match_dict = {
         "p1_id": challenger_id,
@@ -497,8 +493,8 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         "p1_hand": p1_hand,
         "p2_hand": p2_hand,
         "deck": deck,
-        "p1_action": p1_auto,
-        "p2_action": p2_auto,
+        "p1_action": p1_natural,
+        "p2_action": p2_natural,
         "chat_id": callback.message.chat.id,
         "msg_id": callback.message.message_id,
         "thread_id": thread_id,
@@ -506,7 +502,13 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     }
     active_duels[match_id] = match_dict
 
-    if p1_auto and p2_auto:
+    if p1_natural or p2_natural:
+        await callback.message.edit_text(
+            f"🃏 <b>ရှမ်းကိုးမီး ပွဲစဉ် စတင်ပါပြီ!</b>\n\n"
+            f"⚡ <b>ဒေါင်း/ရှမ်းကိုး ပေါက်သွားသဖြင့် ဖဲလှန်ပါမည်...</b>",
+            parse_mode="HTML"
+        )
+        await asyncio.sleep(2.0)
         async with duel_lock:
             await finish_duel(match_id)
         return
@@ -572,9 +574,8 @@ async def handle_hit_card(callback: types.CallbackQuery):
         await callback.answer("သင် ရွေးချယ်ပြီးပါပြီ!", show_alert=True)
         return
 
-    initial_score = calculate_hand_score(hand)
-    if initial_score >= 7:
-        await callback.answer("၇ နှင့်အထက် ဖြစ်၍ ဖဲထပ်ဆွဲ၍ မရပါ (ဒေါင်း/ရှမ်းကိုး)", show_alert=True)
+    if is_natural_win(hand):
+        await callback.answer("ရှမ်းကိုး/ရှစ်ဒေါင်း ဖြစ်နေ၍ ဖဲဆွဲ၍ မရပါ!", show_alert=True)
         duel[f"{player_key}_action"] = True
     else:
         if len(hand) == 2 and duel["deck"]:
@@ -750,16 +751,16 @@ async def handle_spin(callback: types.CallbackQuery):
     except Exception:
         pass
 
+    # ဘေလ်မဲပေါက်ပါက ကြေညာသည့် ဂုဏ်ပြုစာ (ပြန်မဖျက်ဘဲ အမြဲထားရှိသည်)
     if result > 0:
         winner_mention = f"@{html.escape(callback.from_user.username)}" if callback.from_user.username else clean_name(callback.from_user.first_name)
         try:
-            congrats_msg = await bot.send_message(
+            await bot.send_message(
                 chat_id=chat_id,
                 message_thread_id=thread_id,
                 text=f"🎉 ဂုဏ်ယူပါတယ်! <b>{winner_mention}</b> သည် ကံစမ်းမဲမှ <b>{result} Bill</b> ကံထူးသွားပါသည်! 💰",
                 parse_mode="HTML"
             )
-            asyncio.create_task(auto_delete_spin_message(chat_id, congrats_msg.message_id, delay=60))
         except Exception:
             pass
 
@@ -954,6 +955,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     safe_phone = html.escape(str(phone))
     safe_operator = html.escape(str(operator))
 
+    # ဖုန်းဘေလ်ထုတ်ယူမှုနှင့် အရုပ်ထုတ်ယူမှု ဂုဏ်ပြုစာများ (ပြန်မဖျက်ဘဲ အမြဲထားရှိသည်)
     if r_type == "gift":
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! <b>{user_name}</b> သို့ 🧸 ဝက်ဝံရုပ် Profile Gift ပေးပို့ပြီးပါပြီ!"
         user_notify = f"🎉 သင်တောင်းဆိုထားသော 🧸 ဝက်ဝံရုပ် Profile Gift ကို {phone} သို့ ပို့ပေးပြီးပါပြီ!"
