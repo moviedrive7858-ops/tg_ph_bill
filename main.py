@@ -5,6 +5,7 @@ import random
 import string
 import re
 import html
+import sqlite3
 from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
@@ -98,18 +99,31 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
+# SQLite WAL mode safe backup function
+def create_safe_backup_file(backup_filename: str):
+    src = sqlite3.connect(db.DB_NAME)
+    dst = sqlite3.connect(backup_filename)
+    with dst:
+        src.backup(dst)
+    dst.close()
+    src.close()
+
 async def auto_backup_task():
     while True:
         await asyncio.sleep(86400)
         try:
             today = datetime.now().strftime("%Y-%m-%d")
             if os.path.exists(db.DB_NAME) and ADMIN_LOG_GROUP_ID != 0:
-                backup_file = FSInputFile(db.DB_NAME, filename=f"backup_{today}.db")
+                temp_filename = f"backup_{today}.db"
+                await asyncio.to_thread(create_safe_backup_file, temp_filename)
+                backup_file = FSInputFile(temp_filename, filename=temp_filename)
                 await bot.send_document(
                     chat_id=ADMIN_LOG_GROUP_ID,
                     document=backup_file,
                     caption=f"📦 Daily Database Backup ({today})"
                 )
+                if os.path.exists(temp_filename):
+                    os.remove(temp_filename)
         except Exception as e:
             print(f"Auto Backup Error: {e}")
 
@@ -120,6 +134,16 @@ async def expire_drop_code_task(drop_code: str, chat_id: int, message_id: int, d
             chat_stats["active_drop_code"] = None
             chat_stats["drop_type"] = None
             chat_stats["drop_message_id"] = None
+            try:
+                await bot.delete_message(chat_id=chat_id, message_id=message_id)
+            except Exception:
+                pass
+
+async def expire_challenge_task(challenge_id: str, chat_id: int, message_id: int, delay: int = 60):
+    await asyncio.sleep(delay)
+    async with duel_lock:
+        if challenge_id in active_duels:
+            del active_duels[challenge_id]
             try:
                 await bot.delete_message(chat_id=chat_id, message_id=message_id)
             except Exception:
@@ -363,6 +387,8 @@ async def cmd_lucky_duel(message: types.Message):
         "msg_id": sent_msg.message_id,
         "chat_id": message.chat.id
     }
+    # စက္ကန့် ၆၀ အတွင်း ဘယ်သူမှ လက်မခံပါက စိန်ခေါ်မှုကို ဖျက်ပေးမည့် Task
+    asyncio.create_task(expire_challenge_task(challenge_id, message.chat.id, sent_msg.message_id, delay=60))
 
 @dp.callback_query(lambda c: c.data.startswith("accept_duel_"))
 async def handle_accept_duel(callback: types.CallbackQuery):
@@ -1115,8 +1141,15 @@ async def cmd_manual_backup(message: types.Message):
     if not os.path.exists(db.DB_NAME):
         return
     now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    backup_file = FSInputFile(db.DB_NAME, filename=f"backup_manual_{now_str}.db")
-    await message.reply_document(document=backup_file, caption=f"📦 Backup ({now_str})")
+    temp_filename = f"backup_manual_{now_str}.db"
+    try:
+        await asyncio.to_thread(create_safe_backup_file, temp_filename)
+        backup_file = FSInputFile(temp_filename, filename=temp_filename)
+        await message.reply_document(document=backup_file, caption=f"📦 Safe Backup ({now_str})")
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
+    except Exception as e:
+        await message.reply(f"❌ Backup Error: {e}")
 
 @dp.message(Command("restore"))
 async def cmd_restore(message: types.Message):
@@ -1232,7 +1265,8 @@ async def main():
     asyncio.create_task(start_web_server())
     asyncio.create_task(auto_backup_task())
     print(f"Bot @{BOT_USERNAME} is successfully running...")
-    await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
+    # Chat member changes ကိုပါ ပေါင်းထည့်ပြီး စနစ်တကျ register လုပ်ထားသည်
+    await dp.start_polling(bot, allowed_updates=["message", "callback_query", "chat_member"])
 
 if __name__ == "__main__":
     asyncio.run(main())
