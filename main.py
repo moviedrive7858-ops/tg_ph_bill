@@ -219,8 +219,9 @@ async def cmd_gift_coin(message: types.Message):
             pass
         return
 
-    r_mention = f"@{receiver.username}" if receiver.username else clean_name(receiver.first_name)
-    s_mention = f"@{sender.username}" if sender.username else clean_name(sender.first_name)
+    # နာမည်အမှန် သို့မဟုတ် Mention သေချာဖော်ပြခြင်း
+    s_mention = f"@{sender.username}" if sender.username else f'<a href="tg://user?id={sender.id}">{clean_name(sender.first_name)}</a>'
+    r_mention = f"@{receiver.username}" if receiver.username else f'<a href="tg://user?id={receiver.id}">{clean_name(receiver.first_name)}</a>'
 
     await bot.send_message(
         chat_id=message.chat.id,
@@ -253,7 +254,6 @@ async def finish_duel(match_id: str):
     if not duel:
         return
 
-    # ၂၀ စက္ကန့် စောင့်နေသော Task ကို ချက်ချင်း ပယ်ဖျက်မည်
     timer_task = duel.get("timer_task")
     if timer_task and not timer_task.done():
         timer_task.cancel()
@@ -263,7 +263,7 @@ async def finish_duel(match_id: str):
     p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
     deck = duel["deck"]
 
-    # ၄ မှတ်နှင့်အောက်ဖြစ်ပါက ၃ ချပ်မြောက် အော်တိုဆွဲပေးမည်
+    # ၄ မှတ်နှင့်အောက်ဖြစ်ပါက အော်တိုဆွဲပေးမည်
     if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4:
         p1_hand.append(deck.pop())
     if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4:
@@ -405,7 +405,6 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     p2_hand = [deck.pop(), deck.pop()]
     match_id = f"m_{challenger_id}_{accepter.id}_{int(time.time())}"
 
-    # ၇ မှတ်နှင့်အထက် ဖြစ်ပါက အော်တို Stand ပေးထားမည်
     p1_auto = calculate_hand_score(p1_hand) >= 7
     p2_auto = calculate_hand_score(p2_hand) >= 7
 
@@ -425,7 +424,6 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     }
     active_duels[match_id] = match_dict
 
-    # အကယ်၍ နှစ်ယောက်စလုံး ၇ မှတ်အထက် (ရှမ်းကိုး/ရှစ်ဒေါင်း) ကျပါက ချက်ချင်းဖဲလှန်ပေးမည်
     if p1_auto and p2_auto:
         await finish_duel(match_id)
         return
@@ -502,7 +500,7 @@ async def handle_hit_card(callback: types.CallbackQuery):
         cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in hand])
         await callback.answer(f"📥 ဖဲ ၁ ချပ်ဆွဲလိုက်ပါပြီ!\nလက်ရှိ: {cards_str} ({get_hand_title(hand)})", show_alert=True)
 
-    # နှစ်ဦးလုံး ရွေးချယ်ပြီးပါက ၂၀ စက္ကန့် မစောင့်ဘဲ ချက်ချင်း ဖဲလှန်မည်
+    # ၂ ယောက်လုံး ရွေးချယ်ပြီးပါက ချက်ချင်း ဖဲလှန်ပေးခြင်း
     if duel["p1_action"] and duel["p2_action"]:
         async with duel_lock:
             await finish_duel(match_id)
@@ -528,7 +526,7 @@ async def handle_stand_card(callback: types.CallbackQuery):
     duel[f"{player_key}_action"] = True
     await callback.answer("✋ နေလိုက်ပါပြီ (ဖဲမဆွဲပါ)။", show_alert=True)
 
-    # နှစ်ဦးလုံး ရွေးချယ်ပြီးပါက ၂၀ စက္ကန့် မစောင့်ဘဲ ချက်ချင်း ဖဲလှန်မည်
+    # ၂ ယောက်လုံး ရွေးချယ်ပြီးပါက ချက်ချင်း ဖဲလှန်ပေးခြင်း
     if duel["p1_action"] and duel["p2_action"]:
         async with duel_lock:
             await finish_duel(match_id)
@@ -758,10 +756,11 @@ async def submit_gift_username(message: types.Message, state: FSMContext):
         admin_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Gift ပို့ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
         ])
+        u_mention = f"@{message.from_user.username}" if message.from_user.username else clean_name(message.from_user.first_name)
         admin_log = (
             f"🔔 [🧸 ဝက်ဝံရုပ် Gift လဲလှယ်မှု အော်ဒါ]\n\n"
-            f"အကောင့်: {clean_name(message.from_user.first_name)} (<code>{message.from_user.id}</code>)\n"
-            f"Username: {target_un}\n"
+            f"အကောင့်: {u_mention} (<code>{message.from_user.id}</code>)\n"
+            f"ပို့ပေးရမည့် Username: {target_un}\n"
             f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         try:
@@ -798,9 +797,10 @@ async def submit_phone(message: types.Message, state: FSMContext):
         admin_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ ဖြည့်ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
         ])
+        u_mention = f"@{message.from_user.username}" if message.from_user.username else clean_name(message.from_user.first_name)
         admin_log = (
             f"🔔 [📱 ဖုန်းဘေလ် လဲလှယ်မှု အော်ဒါ]\n\n"
-            f"အကောင့်: {clean_name(message.from_user.first_name)} (<code>{message.from_user.id}</code>)\n"
+            f"အကောင့်: {u_mention} (<code>{message.from_user.id}</code>)\n"
             f"အော်ပရေတာ: {operator}\n"
             f"ဖုန်းနံပါတ်: <code>{phone}</code>\n"
             f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
@@ -826,8 +826,19 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         return
 
     uid, operator, phone, _, r_type = res
-    user_info = await db.get_or_create_user(uid, "", "")
-    user_name = clean_name(user_info[2] if user_info else "User")
+    
+    # 📌 Database မှ User အချက်အလက်ကို တိုက်ရိုက်ဆွဲထုတ်၍ နာမည်အမှန်ဖော်ပြခြင်း
+    user_detail = await db.get_user_detail(uid)
+    if user_detail:
+        u_data = user_detail[0]
+        if u_data[1]:
+            user_name = f"@{u_data[1]}"
+        elif u_data[2]:
+            user_name = f'<a href="tg://user?id={uid}">{clean_name(u_data[2])}</a>'
+        else:
+            user_name = f'<a href="tg://user?id={uid}">User</a>'
+    else:
+        user_name = f'<a href="tg://user?id={uid}">User</a>'
 
     if r_type == "gift":
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! <b>{user_name}</b> သို့ 🧸 ဝက်ဝံရုပ် Profile Gift ပေးပို့ပြီးပါပြီ!"
