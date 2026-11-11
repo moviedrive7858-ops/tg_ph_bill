@@ -37,7 +37,7 @@ claim_lock = asyncio.Lock()
 duel_lock = asyncio.Lock()
 
 active_duels = {}
-last_duel_created_time = 0  # Global Cooldown မှတ်ရန်
+last_duel_created_time = 0
 
 MESSAGE_TARGET = 100
 
@@ -225,7 +225,7 @@ async def cmd_gift_coin(message: types.Message):
     await bot.send_message(
         chat_id=message.chat.id,
         message_thread_id=SPIN_TOPIC_ID,
-        text=f"🎁 {s_mention} မှ {r_mention} ထံသို့ <b>၄၀ ကျပ်</b> လက်ဆောင် ပေးပို့လိုက်ပါပြီ!လွှဲခ ၁၀ ကျပ် 🎉",
+        text=f"🎁 {s_mention} မှ {r_mention} ထံသို့ <b>၄၀ ကျပ်</b> လက်ဆောင် ပေးပို့လိုက်ပါပြီ! (လွှဲခ ၁၀ ကျပ်) 🎉",
         parse_mode="HTML"
     )
 
@@ -240,23 +240,33 @@ async def auto_delete_duel_result(chat_id: int, message_id: int, delay: int = 30
         pass
 
 async def auto_resolve_duel(match_id: str):
-    await asyncio.sleep(20)
-    if match_id in active_duels:
-        await finish_duel(match_id)
+    try:
+        await asyncio.sleep(20)
+        async with duel_lock:
+            if match_id in active_duels:
+                await finish_duel(match_id)
+    except asyncio.CancelledError:
+        pass
 
 async def finish_duel(match_id: str):
     duel = active_duels.pop(match_id, None)
     if not duel:
         return
 
+    # ၂၀ စက္ကန့် စောင့်နေသော Task ကို ချက်ချင်း ပယ်ဖျက်မည်
+    timer_task = duel.get("timer_task")
+    if timer_task and not timer_task.done():
+        timer_task.cancel()
+
     p1_id, p2_id = duel["p1_id"], duel["p2_id"]
     p1_name, p2_name = duel["p1_name"], duel["p2_name"]
     p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
     deck = duel["deck"]
 
-    if calculate_hand_score(p1_hand) <= 4 and len(p1_hand) == 2:
+    # ၄ မှတ်နှင့်အောက်ဖြစ်ပါက ၃ ချပ်မြောက် အော်တိုဆွဲပေးမည်
+    if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4:
         p1_hand.append(deck.pop())
-    if calculate_hand_score(p2_hand) <= 4 and len(p2_hand) == 2:
+    if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4:
         p2_hand.append(deck.pop())
 
     winner = compare_shan_hands(p1_hand, p2_hand)
@@ -267,15 +277,16 @@ async def finish_duel(match_id: str):
         w_id, l_id = p2_id, p1_id
         w_name = p2_name
 
-    await db.record_duel_match(w_id, l_id, p1_id, p2_id)
+    try:
+        await db.record_duel_match(w_id, l_id, p1_id, p2_id)
+    except Exception as e:
+        print(f"Record Duel Error: {e}")
 
-    # ဖဲကစားနေစဉ် message အား ချက်ချင်းဖျက်ပေးခြင်း
     try:
         await bot.delete_message(chat_id=duel["chat_id"], message_id=duel["msg_id"])
     except Exception:
         pass
 
-    # ၂ ယောက်ရလဒ် အတိုချုပ်နှင့် အနိုင်ရသူအား အများမြင်ကွင်းတွင် လှန်ပြပေးခြင်း
     p1_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p1_hand])
     p2_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p2_hand])
 
@@ -283,18 +294,19 @@ async def finish_duel(match_id: str):
         f"🃏 <b>ရှမ်းကိုးမီး ရလဒ်:</b>\n"
         f"👤 {clean_name(p1_name)}: {p1_cards_str} ({get_hand_title(p1_hand)})\n"
         f"👤 {clean_name(p2_name)}: {p2_cards_str} ({get_hand_title(p2_hand)})\n\n"
-        f"🎉 <b>{clean_name(w_name)}</b> မှ <b>+၅၀ ကျပ်</b> အနိုင်ရရှိသွားပါသည်!Fees ၁၀ ကျပ် 👑"
+        f"🎉 <b>{clean_name(w_name)}</b> မှ <b>+၄၀ ကျပ်</b> အနိုင်ရရှိသွားပါသည်! 👑"
     )
 
-    result_msg = await bot.send_message(
-        chat_id=duel["chat_id"],
-        message_thread_id=SPIN_TOPIC_ID,
-        text=result_text,
-        parse_mode="HTML"
-    )
-
-    # ရလဒ်စာကို စက္ကန့် ၃၀ အကြာတွင် အလိုအလျောက် ပြန်ဖျက်ပေးမည့် Task
-    asyncio.create_task(auto_delete_duel_result(duel["chat_id"], result_msg.message_id, delay=30))
+    try:
+        result_msg = await bot.send_message(
+            chat_id=duel["chat_id"],
+            message_thread_id=SPIN_TOPIC_ID,
+            text=result_text,
+            parse_mode="HTML"
+        )
+        asyncio.create_task(auto_delete_duel_result(duel["chat_id"], result_msg.message_id, delay=30))
+    except Exception as e:
+        print(f"Send Duel Result Error: {e}")
 
 @dp.message(Command("lucky"))
 async def cmd_lucky_duel(message: types.Message):
@@ -306,7 +318,6 @@ async def cmd_lucky_duel(message: types.Message):
     challenger = message.from_user
     is_owner = (challenger.id == OWNER_ID)
 
-    # ⏱️ စိန်ခေါ်မှု အထပ်ထပ် မဖြစ်စေရန် ၁၅ စက္ကန့် Global Cooldown စစ်ဆေးခြင်း
     now = time.time()
     if not is_owner:
         if now - last_duel_created_time < 15:
@@ -380,7 +391,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
             if reason in ["P1_INSUFFICIENT", "P2_INSUFFICIENT"]:
                 await callback.answer("ကစားသူတစ်ဦးတွင် လက်ကျန် ၃၅၀ မပြည့်တော့ပါ!", show_alert=True)
             elif reason == "PAIR_COOLDOWN_10M":
-                await callback.answer("ဤ Player နှင့် ၃ ပွဲဆော့ပြီးသွားသဖြင့် သူနှင့်ပြန်ဆော့လိုပါက ၁၀ မိနစ် Cooldown စောင့်ပါ!အခြားသူနှင့် ဆက်ပြီးကစားနေနိုင်ပါသည်။", show_alert=True)
+                await callback.answer("ဤ Player နှင့် ၃ ပွဲဆော့ပြီးသွားသဖြင့် ၁၀ မိနစ် Cooldown စောင့်ပါ!", show_alert=True)
             return
 
         del active_duels[challenge_id]
@@ -394,7 +405,11 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     p2_hand = [deck.pop(), deck.pop()]
     match_id = f"m_{challenger_id}_{accepter.id}_{int(time.time())}"
 
-    active_duels[match_id] = {
+    # ၇ မှတ်နှင့်အထက် ဖြစ်ပါက အော်တို Stand ပေးထားမည်
+    p1_auto = calculate_hand_score(p1_hand) >= 7
+    p2_auto = calculate_hand_score(p2_hand) >= 7
+
+    match_dict = {
         "p1_id": challenger_id,
         "p2_id": accepter.id,
         "p1_name": challenger_name,
@@ -402,11 +417,18 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         "p1_hand": p1_hand,
         "p2_hand": p2_hand,
         "deck": deck,
-        "p1_action": False,
-        "p2_action": False,
+        "p1_action": p1_auto,
+        "p2_action": p2_auto,
         "chat_id": callback.message.chat.id,
-        "msg_id": callback.message.message_id
+        "msg_id": callback.message.message_id,
+        "timer_task": None
     }
+    active_duels[match_id] = match_dict
+
+    # အကယ်၍ နှစ်ယောက်စလုံး ၇ မှတ်အထက် (ရှမ်းကိုး/ရှစ်ဒေါင်း) ကျပါက ချက်ချင်းဖဲလှန်ပေးမည်
+    if p1_auto and p2_auto:
+        await finish_duel(match_id)
+        return
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="👁️ မိမိဖဲချပ်ကို ကြည့်မည်", callback_data=f"peek_{match_id}")],
@@ -425,7 +447,8 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         parse_mode="HTML"
     )
 
-    asyncio.create_task(auto_resolve_duel(match_id))
+    task = asyncio.create_task(auto_resolve_duel(match_id))
+    match_dict["timer_task"] = task
 
 @dp.callback_query(lambda c: c.data.startswith("peek_"))
 async def handle_peek_card(callback: types.CallbackQuery):
@@ -479,8 +502,10 @@ async def handle_hit_card(callback: types.CallbackQuery):
         cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in hand])
         await callback.answer(f"📥 ဖဲ ၁ ချပ်ဆွဲလိုက်ပါပြီ!\nလက်ရှိ: {cards_str} ({get_hand_title(hand)})", show_alert=True)
 
+    # နှစ်ဦးလုံး ရွေးချယ်ပြီးပါက ၂၀ စက္ကန့် မစောင့်ဘဲ ချက်ချင်း ဖဲလှန်မည်
     if duel["p1_action"] and duel["p2_action"]:
-        await finish_duel(match_id)
+        async with duel_lock:
+            await finish_duel(match_id)
 
 @dp.callback_query(lambda c: c.data.startswith("stand_"))
 async def handle_stand_card(callback: types.CallbackQuery):
@@ -503,8 +528,10 @@ async def handle_stand_card(callback: types.CallbackQuery):
     duel[f"{player_key}_action"] = True
     await callback.answer("✋ နေလိုက်ပါပြီ (ဖဲမဆွဲပါ)။", show_alert=True)
 
+    # နှစ်ဦးလုံး ရွေးချယ်ပြီးပါက ၂၀ စက္ကန့် မစောင့်ဘဲ ချက်ချင်း ဖဲလှန်မည်
     if duel["p1_action"] and duel["p2_action"]:
-        await finish_duel(match_id)
+        async with duel_lock:
+            await finish_duel(match_id)
 
 # ==========================================================
 # 🎰 Spin Menu (/spin)
@@ -626,7 +653,6 @@ async def handle_spin(callback: types.CallbackQuery):
     except Exception:
         pass
 
-    # 📢 ဖုန်းဘေလ် ကံထူးပါက Spin Topic တွင် ကြေညာစာ ပို့ပေးခြင်း
     if result > 0:
         winner_mention = f"@{callback.from_user.username}" if callback.from_user.username else clean_name(callback.from_user.first_name)
         try:
