@@ -622,6 +622,13 @@ async def handle_stand_card(callback: types.CallbackQuery):
 # ==========================================================
 # 🎰 Spin Menu (/spin) - Spin Topic
 # ==========================================================
+async def auto_delete_spin_message(chat_id: int, message_id: int, delay: int = 30):
+    await asyncio.sleep(delay)
+    try:
+        await bot.delete_message(chat_id=chat_id, message_id=message_id)
+    except Exception:
+        pass
+
 def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
     redeem_url = f"https://t.me/{BOT_USERNAME}?start=bill"
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -704,20 +711,23 @@ async def handle_spin(callback: types.CallbackQuery):
 
     await asyncio.sleep(1.5)
     result, data = await db.spin_wheel(orig_user_id, is_owner=is_owner)
-    user_active_menu.pop(orig_user_id, None)
 
     if result == "MAX_BALANCE_REACHED":
         try:
             await callback.message.edit_text(f"⚠️ <b>{clean_name(callback.from_user.first_name)}</b> သင့်အကောင့်ထဲတွင် Bill ၃,၀၀၀ ကျပ် ပြည့်နေပါပြီ။", parse_mode="HTML")
+            asyncio.create_task(auto_delete_spin_message(chat_id, callback.message.message_id, delay=15))
         except Exception:
             pass
+        user_active_menu.pop(orig_user_id, None)
         return
 
     if result == "NO_TOKEN":
         try:
             await callback.message.edit_text(f"<b>{clean_name(callback.from_user.first_name)}</b>\nSpin လှည့်ခွင့် မရှိတော့ပါ။ Group ထဲသို့ Contact မှ သူငယ်ချင်းများကို Add ပေးပါ။", parse_mode="HTML")
+            asyncio.create_task(auto_delete_spin_message(chat_id, callback.message.message_id, delay=15))
         except Exception:
             pass
+        user_active_menu.pop(orig_user_id, None)
         return
 
     prize_text = f"သင် <b>{result} Bill</b> ကံထူးသွားပါပြီ!" if result > 0 else "ယခုအကြိမ်တွင် ကံစမ်းမဲ မပေါက်ပါ။"
@@ -736,18 +746,20 @@ async def handle_spin(callback: types.CallbackQuery):
 
     try:
         await callback.message.edit_text(result_display, reply_markup=spin_again_kb, parse_mode="HTML")
+        asyncio.create_task(auto_delete_spin_message(chat_id, callback.message.message_id, delay=30))
     except Exception:
         pass
 
     if result > 0:
         winner_mention = f"@{html.escape(callback.from_user.username)}" if callback.from_user.username else clean_name(callback.from_user.first_name)
         try:
-            await bot.send_message(
+            congrats_msg = await bot.send_message(
                 chat_id=chat_id,
                 message_thread_id=thread_id,
                 text=f"🎉 ဂုဏ်ယူပါတယ်! <b>{winner_mention}</b> သည် ကံစမ်းမဲမှ <b>{result} Bill</b> ကံထူးသွားပါသည်! 💰",
                 parse_mode="HTML"
             )
+            asyncio.create_task(auto_delete_spin_message(chat_id, congrats_msg.message_id, delay=60))
         except Exception:
             pass
 
