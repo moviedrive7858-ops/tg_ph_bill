@@ -259,10 +259,17 @@ async def cmd_gift_coin(message: types.Message):
     s_mention = f"@{html.escape(sender.username)}" if sender.username else f'<a href="tg://user?id={sender.id}">{clean_name(sender.first_name)}</a>'
     r_mention = f"@{html.escape(receiver.username)}" if receiver.username else f'<a href="tg://user?id={receiver.id}">{clean_name(receiver.first_name)}</a>'
 
+    gift_announcement = (
+        f"🎁 <b>လက်ဆောင်ပေးပို့မှု အောင်မြင်ပါသည်!</b>\n"
+        f"👤 ပေးပို့သူ: {s_mention}\n"
+        f"🎯 လက်ခံသူ: {r_mention}\n"
+        f"💰 ပမာဏ: <b>+၄၀ ကျပ်</b> ရောက်ရှိသွားပါပြီ! (လွှဲခ ၁၀ ကျပ် ဖြတ်တောက်ပြီး) 🎉"
+    )
+
     await bot.send_message(
         chat_id=message.chat.id,
         message_thread_id=SPIN_TOPIC_ID,
-        text=f"🎁 {s_mention} မှ {r_mention} ထံသို့ <b>၄၀ ကျပ်</b> လက်ဆောင် ပေးပို့လိုက်ပါပြီ! (လွှဲခ ၁၀ ကျပ်) 🎉",
+        text=gift_announcement,
         parse_mode="HTML"
     )
 
@@ -304,13 +311,16 @@ async def finish_duel(match_id: str):
     if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
         p2_hand.append(deck.pop())
 
+    duel["p1_action"] = True
+    duel["p2_action"] = True
+
     winner = compare_shan_hands(p1_hand, p2_hand)
     if winner == "p1":
         w_id, l_id = p1_id, p2_id
-        w_name = p1_name
+        w_name, l_name = p1_name, p2_name
     else:
         w_id, l_id = p2_id, p1_id
-        w_name = p2_name
+        w_name, l_name = p2_name, p1_name
 
     try:
         await db.record_duel_match(w_id, l_id, p1_id, p2_id)
@@ -325,23 +335,36 @@ async def finish_duel(match_id: str):
     p1_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p1_hand])
     p2_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p2_hand])
 
-    result_text = (
+    score_board_text = (
         f"🃏 <b>ရှမ်းကိုးမီး ရလဒ်:</b>\n"
         f"👤 {clean_name(p1_name)}: {p1_cards_str} ({get_hand_title(p1_hand)})\n"
-        f"👤 {clean_name(p2_name)}: {p2_cards_str} ({get_hand_title(p2_hand)})\n\n"
-        f"🎉 <b>{clean_name(w_name)}</b> မှ <b>+၄၀ ကျပ်</b> အနိုင်ရရှိသွားပါသည်! 👑"
+        f"👤 {clean_name(p2_name)}: {p2_cards_str} ({get_hand_title(p2_hand)})"
     )
 
     try:
-        result_msg = await bot.send_message(
+        score_msg = await bot.send_message(
             chat_id=duel["chat_id"],
             message_thread_id=SPIN_TOPIC_ID,
-            text=result_text,
+            text=score_board_text,
             parse_mode="HTML"
         )
-        asyncio.create_task(auto_delete_duel_result(duel["chat_id"], result_msg.message_id, delay=30))
+        asyncio.create_task(auto_delete_duel_result(duel["chat_id"], score_msg.message_id, delay=30))
     except Exception as e:
-        print(f"Send Duel Result Error: {e}")
+        print(f"Send Duel Cards Error: {e}")
+
+    w_mention = f'<a href="tg://user?id={w_id}">{clean_name(w_name)}</a>'
+    l_mention = f'<a href="tg://user?id={l_id}">{clean_name(l_name)}</a>'
+    announce_win_text = f"🎉 {w_mention} မှ {l_mention} ထံမှ <b>+၄၀ ကျပ်</b> အနိုင်ရရှိသွားပါသည်! 👑"
+
+    try:
+        await bot.send_message(
+            chat_id=duel["chat_id"],
+            message_thread_id=SPIN_TOPIC_ID,
+            text=announce_win_text,
+            parse_mode="HTML"
+        )
+    except Exception as e:
+        print(f"Send Duel Announce Error: {e}")
 
 @dp.message(Command("lucky"))
 async def cmd_lucky_duel(message: types.Message):
@@ -1216,7 +1239,6 @@ async def handle_chat_activity(message: types.Message):
 
     text = message.text or ""
 
-    # Drop Code Claim စစ်ဆေးချက်
     if message.reply_to_message:
         replied_msg_id = message.reply_to_message.message_id
         async with claim_lock:
