@@ -111,7 +111,6 @@ async def add_tokens(user_id: int, amount: int):
         return res[0] if res else 0
 
 async def deduct_coins(user_id: int, amount: int, min_remaining: int = 0) -> tuple[bool, int]:
-    """Atomic balance deduction: Prevents dropping below minimum threshold."""
     async with get_db() as db:
         cursor = await db.execute(
             "UPDATE users SET coins = coins - ? WHERE user_id = ? AND (coins - ?) >= ?",
