@@ -82,8 +82,8 @@ def is_valid_chat_message(text: str) -> bool:
     return True
 
 def is_general_topic(message: types.Message) -> bool:
-    t_id = message.message_thread_id
-    return t_id in [GENERAL_TOPIC_ID, 1, None]
+    # Spin Topic မဟုတ်လျှင် General Topic (သို့မဟုတ် Root Topic) အဖြစ် သတ်မှတ်သည်
+    return message.message_thread_id != SPIN_TOPIC_ID
 
 class RedeemState(StatesGroup):
     waiting_for_reward_choice = State()
@@ -234,6 +234,13 @@ async def cmd_gift_coin(message: types.Message):
 
     sender = message.from_user
     if not message.reply_to_message or not message.reply_to_message.from_user:
+        help_msg = await message.reply("💡 <b>အသုံးပြုနည်း:</b> လက်ဆောင်ပေးလိုသူ၏ စာကို Reply ထောက်ပြီး <code>/gf</code> ဟု ရိုက်ပေးပါ။", parse_mode="HTML")
+        await asyncio.sleep(5)
+        try:
+            await help_msg.delete()
+            await message.delete()
+        except Exception:
+            pass
         return
 
     receiver = message.reply_to_message.from_user
@@ -270,10 +277,9 @@ async def cmd_gift_coin(message: types.Message):
         f"💰 ပမာဏ: <b>+၄၀ ကျပ်</b> ရောက်ရှိသွားပါပြီ! (လွှဲခ ၁၀ ကျပ် ဖြတ်တောက်ပြီး) 🎉"
     )
 
-    target_thread = message.message_thread_id or GENERAL_TOPIC_ID
     await bot.send_message(
         chat_id=message.chat.id,
-        message_thread_id=target_thread,
+        message_thread_id=message.message_thread_id,
         text=gift_announcement,
         parse_mode="HTML"
     )
@@ -310,7 +316,7 @@ async def finish_duel(match_id: str):
     p1_name, p2_name = duel["p1_name"], duel["p2_name"]
     p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
     deck = duel["deck"]
-    thread_id = duel.get("thread_id", GENERAL_TOPIC_ID)
+    thread_id = duel.get("thread_id")
 
     if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
         p1_hand.append(deck.pop())
@@ -423,10 +429,9 @@ async def cmd_lucky_duel(message: types.Message):
         [InlineKeyboardButton(text="🃏 စိန်ခေါ်မှု လက်ခံမည် (၅၀ ကျပ်)", callback_data=f"accept_duel_{challenge_id}")]
     ])
 
-    target_thread = message.message_thread_id or GENERAL_TOPIC_ID
     sent_msg = await bot.send_message(
         chat_id=message.chat.id,
-        message_thread_id=target_thread,
+        message_thread_id=message.message_thread_id,
         text=f"🃏 <b>{clean_name(challenger.first_name)}</b> က ရှမ်းကိုးမီးကစားရန် စိန်ခေါ်ထားပါသည်!",
         reply_markup=kb,
         parse_mode="HTML"
@@ -437,7 +442,7 @@ async def cmd_lucky_duel(message: types.Message):
         "challenger_name": challenger.first_name,
         "msg_id": sent_msg.message_id,
         "chat_id": message.chat.id,
-        "thread_id": target_thread
+        "thread_id": message.message_thread_id
     }
     asyncio.create_task(expire_challenge_task(challenge_id, message.chat.id, sent_msg.message_id, delay=60))
 
@@ -454,7 +459,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         duel_data = active_duels[challenge_id]
         challenger_id = duel_data["challenger_id"]
         challenger_name = duel_data["challenger_name"]
-        thread_id = duel_data.get("thread_id", GENERAL_TOPIC_ID)
+        thread_id = duel_data.get("thread_id")
 
         if accepter.id == challenger_id:
             await callback.answer("မိမိစိန်ခေါ်မှုကို မိမိ ပြန်လက်ခံ၍ မရပါ!", show_alert=True)
@@ -1277,11 +1282,10 @@ async def handle_chat_activity(message: types.Message):
                         reward_text = "💎 ဖုန်းဘေလ် ၁၀၀ ကျပ်"
 
                     congrats_text = f"🎁 <b>Claimed by {winner_mention}!</b> ({reward_text})"
-                    target_thread = message.message_thread_id or GENERAL_TOPIC_ID
                     try:
                         await bot.send_message(
                             chat_id=message.chat.id,
-                            message_thread_id=target_thread,
+                            message_thread_id=message.message_thread_id,
                             text=congrats_text,
                             parse_mode="HTML"
                         )
@@ -1316,11 +1320,10 @@ async def handle_chat_activity(message: types.Message):
             chat_stats["active_drop_code"] = drop_code
             chat_stats["drop_type"] = d_type
 
-        target_thread = message.message_thread_id or GENERAL_TOPIC_ID
         try:
             drop_msg = await bot.send_message(
                 chat_id=message.chat.id,
-                message_thread_id=target_thread,
+                message_thread_id=message.message_thread_id,
                 text=f"🎁 <b>Lucky Code :</b> <code>{drop_code}</code>",
                 parse_mode="HTML"
             )
