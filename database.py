@@ -112,7 +112,7 @@ async def deduct_coins(user_id: int, amount: int):
         cursor = await db.execute("SELECT coins FROM users WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
         if not row:
-            return None
+            return 0
         current_coins = row[0]
         new_coins = max(0, current_coins - amount)
         await db.execute("UPDATE users SET coins = ? WHERE user_id = ?", (new_coins, user_id))
@@ -124,7 +124,7 @@ async def deduct_tokens(user_id: int, amount: int):
         cursor = await db.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
         if not row:
-            return None
+            return 0
         current_tokens = row[0]
         new_tokens = max(0, current_tokens - amount)
         await db.execute("UPDATE users SET tokens = ? WHERE user_id = ?", (new_tokens, user_id))
@@ -138,7 +138,6 @@ async def record_invitation(inviter_id: int, new_member_id: int):
             return False
         
         await db.execute("INSERT INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
-        
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
@@ -251,15 +250,14 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
                 """
                 SELECT match_time FROM duels 
                 WHERE ((player1_id = ? AND player2_id = ?) OR (player1_id = ? AND player2_id = ?))
-                ORDER BY id DESC LIMIT 3
+                  AND match_time >= datetime('now', '-10 minutes')
+                ORDER BY id DESC
                 """,
                 (player1_id, player2_id, player2_id, player1_id)
             )
             rows = await c.fetchall()
-            if len(rows) == 3:
-                last_match_time = rows[0][0]
-                if last_match_time > ten_mins_ago:
-                    return False, "PAIR_COOLDOWN_10M"
+            if len(rows) >= 3:
+                return False, "PAIR_COOLDOWN_10M"
 
         return True, "ELIGIBLE"
 
