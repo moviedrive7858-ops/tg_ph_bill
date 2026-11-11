@@ -46,6 +46,11 @@ async def init_db():
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        try:
+            await db.execute("ALTER TABLE redemptions ADD COLUMN reward_type TEXT DEFAULT 'bill'")
+        except Exception:
+            pass
+
         await db.execute("""
             CREATE TABLE IF NOT EXISTS transfers (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,6 +69,12 @@ async def init_db():
                 match_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        # DB ဟောင်းများအတွက် match_time column မရှိပါက auto update လုပ်ပေးခြင်း
+        try:
+            await db.execute("ALTER TABLE duels ADD COLUMN match_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        except Exception:
+            pass
+
         await db.commit()
 
 async def get_or_create_user(user_id: int, username: str, first_name: str):
@@ -245,7 +256,6 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
         if player2_id != owner_id and p2_coins - 50 < 300:
             return False, "P2_INSUFFICIENT"
 
-        # Python local time ဖြင့် တိုက်ရိုက် Parameter ပေးပြီး စစ်ဆေးခြင်း (Timezone mismatch မဖြစ်စေရန်)
         if player1_id != owner_id and player2_id != owner_id:
             c = await db.execute(
                 """
