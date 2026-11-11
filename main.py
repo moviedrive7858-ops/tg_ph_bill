@@ -81,6 +81,10 @@ def is_valid_chat_message(text: str) -> bool:
         return False
     return True
 
+def is_general_topic(message: types.Message) -> bool:
+    t_id = message.message_thread_id
+    return t_id in [GENERAL_TOPIC_ID, 1, None]
+
 class RedeemState(StatesGroup):
     waiting_for_reward_choice = State()
     waiting_for_operator = State()
@@ -221,11 +225,11 @@ async def new_member_message_handler(message: types.Message):
                 pass
 
 # ==========================================================
-# 🎁 Gift Transfer (/gf)
+# 🎁 Gift Transfer (/gf) - General Topic
 # ==========================================================
 @dp.message(Command("gf"))
 async def cmd_gift_coin(message: types.Message):
-    if message.chat.id != SPIN_GROUP_ID or message.message_thread_id != SPIN_TOPIC_ID:
+    if message.chat.id != SPIN_GROUP_ID or not is_general_topic(message):
         return
 
     sender = message.from_user
@@ -266,15 +270,16 @@ async def cmd_gift_coin(message: types.Message):
         f"💰 ပမာဏ: <b>+၄၀ ကျပ်</b> ရောက်ရှိသွားပါပြီ! (လွှဲခ ၁၀ ကျပ် ဖြတ်တောက်ပြီး) 🎉"
     )
 
+    target_thread = message.message_thread_id or GENERAL_TOPIC_ID
     await bot.send_message(
         chat_id=message.chat.id,
-        message_thread_id=SPIN_TOPIC_ID,
+        message_thread_id=target_thread,
         text=gift_announcement,
         parse_mode="HTML"
     )
 
 # ==========================================================
-# 🃏 Shan Koe Mee Duel (/lucky)
+# 🃏 Shan Koe Mee Duel (/lucky) - General Topic
 # ==========================================================
 async def auto_delete_duel_result(chat_id: int, message_id: int, delay: int = 30):
     await asyncio.sleep(delay)
@@ -305,6 +310,7 @@ async def finish_duel(match_id: str):
     p1_name, p2_name = duel["p1_name"], duel["p2_name"]
     p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
     deck = duel["deck"]
+    thread_id = duel.get("thread_id", GENERAL_TOPIC_ID)
 
     if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
         p1_hand.append(deck.pop())
@@ -344,7 +350,7 @@ async def finish_duel(match_id: str):
     try:
         score_msg = await bot.send_message(
             chat_id=duel["chat_id"],
-            message_thread_id=SPIN_TOPIC_ID,
+            message_thread_id=thread_id,
             text=score_board_text,
             parse_mode="HTML"
         )
@@ -359,7 +365,7 @@ async def finish_duel(match_id: str):
     try:
         await bot.send_message(
             chat_id=duel["chat_id"],
-            message_thread_id=SPIN_TOPIC_ID,
+            message_thread_id=thread_id,
             text=announce_win_text,
             parse_mode="HTML"
         )
@@ -370,7 +376,7 @@ async def finish_duel(match_id: str):
 async def cmd_lucky_duel(message: types.Message):
     global last_duel_created_time
 
-    if message.chat.id != SPIN_GROUP_ID or message.message_thread_id != SPIN_TOPIC_ID:
+    if message.chat.id != SPIN_GROUP_ID or not is_general_topic(message):
         return
 
     challenger = message.from_user
@@ -417,9 +423,10 @@ async def cmd_lucky_duel(message: types.Message):
         [InlineKeyboardButton(text="🃏 စိန်ခေါ်မှု လက်ခံမည် (၅၀ ကျပ်)", callback_data=f"accept_duel_{challenge_id}")]
     ])
 
+    target_thread = message.message_thread_id or GENERAL_TOPIC_ID
     sent_msg = await bot.send_message(
         chat_id=message.chat.id,
-        message_thread_id=SPIN_TOPIC_ID,
+        message_thread_id=target_thread,
         text=f"🃏 <b>{clean_name(challenger.first_name)}</b> က ရှမ်းကိုးမီးကစားရန် စိန်ခေါ်ထားပါသည်!",
         reply_markup=kb,
         parse_mode="HTML"
@@ -429,7 +436,8 @@ async def cmd_lucky_duel(message: types.Message):
         "challenger_id": challenger.id,
         "challenger_name": challenger.first_name,
         "msg_id": sent_msg.message_id,
-        "chat_id": message.chat.id
+        "chat_id": message.chat.id,
+        "thread_id": target_thread
     }
     asyncio.create_task(expire_challenge_task(challenge_id, message.chat.id, sent_msg.message_id, delay=60))
 
@@ -446,6 +454,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         duel_data = active_duels[challenge_id]
         challenger_id = duel_data["challenger_id"]
         challenger_name = duel_data["challenger_name"]
+        thread_id = duel_data.get("thread_id", GENERAL_TOPIC_ID)
 
         if accepter.id == challenger_id:
             await callback.answer("မိမိစိန်ခေါ်မှုကို မိမိ ပြန်လက်ခံ၍ မရပါ!", show_alert=True)
@@ -487,6 +496,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         "p2_action": p2_auto,
         "chat_id": callback.message.chat.id,
         "msg_id": callback.message.message_id,
+        "thread_id": thread_id,
         "timer_task": None
     }
     active_duels[match_id] = match_dict
@@ -605,7 +615,7 @@ async def handle_stand_card(callback: types.CallbackQuery):
             await finish_duel(match_id)
 
 # ==========================================================
-# 🎰 Spin Menu (/spin)
+# 🎰 Spin Menu (/spin) - Spin Topic
 # ==========================================================
 def get_spin_keyboard(user_id: int) -> InlineKeyboardMarkup:
     redeem_url = f"https://t.me/{BOT_USERNAME}?start=bill"
@@ -757,7 +767,7 @@ async def handle_pending_btn(callback: types.CallbackQuery):
     await callback.answer(text, show_alert=True)
 
 # ==========================================================
-# 📱 /bill Command
+# 📱 /bill Command - Private Chat Only
 # ==========================================================
 @dp.message(Command("bill"))
 @dp.message(Command("start"), F.text.startswith("/start bill"))
@@ -1230,7 +1240,7 @@ async def cmd_restore(message: types.Message):
 async def handle_chat_activity(message: types.Message):
     if message.chat.id != SPIN_GROUP_ID:
         return
-    if message.message_thread_id == SPIN_TOPIC_ID:
+    if not is_general_topic(message):
         return
 
     user = message.from_user
@@ -1267,8 +1277,14 @@ async def handle_chat_activity(message: types.Message):
                         reward_text = "💎 ဖုန်းဘေလ် ၁၀၀ ကျပ်"
 
                     congrats_text = f"🎁 <b>Claimed by {winner_mention}!</b> ({reward_text})"
+                    target_thread = message.message_thread_id or GENERAL_TOPIC_ID
                     try:
-                        await bot.send_message(chat_id=message.chat.id, text=congrats_text, parse_mode="HTML")
+                        await bot.send_message(
+                            chat_id=message.chat.id,
+                            message_thread_id=target_thread,
+                            text=congrats_text,
+                            parse_mode="HTML"
+                        )
                         await bot.delete_message(chat_id=message.chat.id, message_id=drop_msg_id)
                     except Exception:
                         pass
@@ -1300,9 +1316,11 @@ async def handle_chat_activity(message: types.Message):
             chat_stats["active_drop_code"] = drop_code
             chat_stats["drop_type"] = d_type
 
+        target_thread = message.message_thread_id or GENERAL_TOPIC_ID
         try:
             drop_msg = await bot.send_message(
                 chat_id=message.chat.id,
+                message_thread_id=target_thread,
                 text=f"🎁 <b>Lucky Code :</b> <code>{drop_code}</code>",
                 parse_mode="HTML"
             )
