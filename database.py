@@ -77,15 +77,16 @@ async def get_or_create_user(user_id: int, username: str, first_name: str):
             """,
             (user_id, u_name, f_name)
         )
-        await db.execute(
-            """
-            UPDATE users 
-            SET username = COALESCE(NULLIF(?, ''), username),
-                first_name = COALESCE(NULLIF(?, ''), first_name)
-            WHERE user_id = ?
-            """,
-            (u_name, f_name, user_id)
-        )
+        if username or first_name:
+            await db.execute(
+                """
+                UPDATE users 
+                SET username = COALESCE(NULLIF(?, ''), username),
+                    first_name = COALESCE(NULLIF(?, ''), first_name)
+                WHERE user_id = ?
+                """,
+                (u_name, f_name, user_id)
+            )
         await db.commit()
         cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         return await cursor.fetchone()
@@ -141,7 +142,7 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
-        # ၂ ယောက်ပြည့်မှ တုံကင် ၁ ခု ပေးမည် (၃ ယောက်ဖြစ်ပါက မရသေးပါ)
+        # ၂ ယောက်ပြည့်မှ တုံကင် ၁ ခု ပေးမည်
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -195,7 +196,7 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         row = await c.fetchone()
         sender_coins = row[0] if row else 0
 
-        # ပို့သူထံမှ ၅၀ နှုတ်ပြီးပါက အနည်းဆုံး ၃၀၀ ကျန်ရမည် (အနည်းဆုံး ၃၅၀ ရှိရမည်)
+        # ပို့သူထံမှ ၅၀ နှုတ်ပြီးပါက အနည်းဆုံး ၃၀၀ ကျန်ရမည်
         if sender_coins - 50 < 300:
             return False, "INSUFFICIENT_BALANCE", sender_coins
 
@@ -213,7 +214,6 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         if (await c.fetchone())[0] >= 3:
             return False, "DAILY_LIMIT_REACHED", sender_coins
 
-        # ၅၀ နှုတ်ပြီး လက်ခံသူထံသို့ ၄၀ ပေးမည်
         cursor = await db.execute(
             "UPDATE users SET coins = coins - 50 WHERE user_id = ? AND coins >= 350",
             (sender_id,)
@@ -243,13 +243,11 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
         p1_coins = r1[0] if r1 else 0
         p2_coins = r2[0] if r2 else 0
 
-        # ကစားသူနှစ်ဦးစလုံး ၅၀ ကြေးဆော့ပြီးပါက ၃၀၀ အနည်းဆုံး ကျန်ရမည်
         if player1_id != owner_id and p1_coins - 50 < 300:
             return False, "P1_INSUFFICIENT"
         if player2_id != owner_id and p2_coins - 50 < 300:
             return False, "P2_INSUFFICIENT"
 
-        # တူညီသော Player ၂ ယောက်သည် ၃ ပွဲဆော့ပြီးပါက ၁၀ မိနစ် Cooldown စောင့်ရမည်
         if player1_id != owner_id and player2_id != owner_id:
             c = await db.execute(
                 """
