@@ -142,7 +142,6 @@ async def record_invitation(inviter_id: int, new_member_id: int):
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
-        # ၂ ယောက်ပြည့်မှ တုံကင် ၁ ခု ပေးမည်
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
             await db.commit()
@@ -196,7 +195,6 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         row = await c.fetchone()
         sender_coins = row[0] if row else 0
 
-        # ပို့သူထံမှ ၅၀ နှုတ်ပြီးပါက အနည်းဆုံး ၃၀၀ ကျန်ရမည်
         if sender_coins - 50 < 300:
             return False, "INSUFFICIENT_BALANCE", sender_coins
 
