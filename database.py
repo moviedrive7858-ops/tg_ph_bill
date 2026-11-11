@@ -69,7 +69,6 @@ async def init_db():
                 match_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        # DB ဟောင်းများအတွက် match_time column မရှိပါက auto update လုပ်ပေးခြင်း
         try:
             await db.execute("ALTER TABLE duels ADD COLUMN match_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
         except Exception:
@@ -83,23 +82,16 @@ async def get_or_create_user(user_id: int, username: str, first_name: str):
     async with get_db() as db:
         await db.execute(
             """
-            INSERT OR IGNORE INTO users (user_id, username, first_name) 
+            INSERT INTO users (user_id, username, first_name) 
             VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = COALESCE(NULLIF(excluded.username, ''), users.username),
+                first_name = COALESCE(NULLIF(excluded.first_name, ''), users.first_name)
             """,
             (user_id, u_name, f_name)
         )
-        if username or first_name:
-            await db.execute(
-                """
-                UPDATE users 
-                SET username = COALESCE(NULLIF(?, ''), username),
-                    first_name = COALESCE(NULLIF(?, ''), first_name)
-                WHERE user_id = ?
-                """,
-                (u_name, f_name, user_id)
-            )
         await db.commit()
-        cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+        cursor = await db.execute("SELECT user_id, username, first_name, coins, tokens, consecutive_losses FROM users WHERE user_id = ?", (user_id,))
         return await cursor.fetchone()
 
 async def add_coins(user_id: int, amount: int):
@@ -118,47 +110,47 @@ async def add_tokens(user_id: int, amount: int):
         res = await cursor.fetchone()
         return res[0] if res else 0
 
-async def deduct_coins(user_id: int, amount: int):
+async def deduct_coins(user_id: int, amount: int, min_remaining: int = 0) -> tuple[bool, int]:
+    """Atomic balance deduction: Prevents dropping below minimum threshold."""
     async with get_db() as db:
-        cursor = await db.execute("SELECT coins FROM users WHERE user_id = ?", (user_id,))
-        row = await cursor.fetchone()
-        if not row:
-            return 0
-        current_coins = row[0]
-        new_coins = max(0, current_coins - amount)
-        await db.execute("UPDATE users SET coins = ? WHERE user_id = ?", (new_coins, user_id))
+        cursor = await db.execute(
+            "UPDATE users SET coins = coins - ? WHERE user_id = ? AND (coins - ?) >= ?",
+            (amount, user_id, amount, min_remaining)
+        )
         await db.commit()
-        return new_coins
+        success = (cursor.rowcount > 0)
+        c = await db.execute("SELECT coins FROM users WHERE user_id = ?", (user_id,))
+        row = await c.fetchone()
+        current = row[0] if row else 0
+        return success, current
 
-async def deduct_tokens(user_id: int, amount: int):
+async def deduct_tokens(user_id: int, amount: int) -> int:
     async with get_db() as db:
+        await db.execute("UPDATE users SET tokens = MAX(0, tokens - ?) WHERE user_id = ?", (amount, user_id))
+        await db.commit()
         cursor = await db.execute("SELECT tokens FROM users WHERE user_id = ?", (user_id,))
         row = await cursor.fetchone()
-        if not row:
-            return 0
-        current_tokens = row[0]
-        new_tokens = max(0, current_tokens - amount)
-        await db.execute("UPDATE users SET tokens = ? WHERE user_id = ?", (new_tokens, user_id))
-        await db.commit()
-        return new_tokens
+        return row[0] if row else 0
 
-async def record_invitation(inviter_id: int, new_member_id: int):
+async def record_invitation(inviter_id: int, new_member_id: int) -> bool:
+    if inviter_id == new_member_id:
+        return False
     async with get_db() as db:
         cursor = await db.execute("SELECT user_id FROM invited_members WHERE user_id = ?", (new_member_id,))
         if await cursor.fetchone():
             return False
         
-        await db.execute("INSERT INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
+        await db.execute("INSERT OR IGNORE INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
+        token_added = False
         if total_invites % 2 == 0:
             await db.execute("UPDATE users SET tokens = tokens + 1 WHERE user_id = ?", (inviter_id,))
-            await db.commit()
-            return True
+            token_added = True
             
         await db.commit()
-        return False
+        return token_added
 
 async def spin_wheel(user_id: int, is_owner: bool = False):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -182,14 +174,18 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             prize = random.choices(PRIZES, weights=WEIGHTS, k=1)[0]
             new_losses = losses + 1 if prize == 0 else 0
 
-        await db.execute("""
+        cursor = await db.execute("""
             UPDATE users 
             SET tokens = tokens - 1, 
                 coins = coins + ?, 
                 consecutive_losses = ?, 
                 last_spin_date = ? 
-            WHERE user_id = ?
+            WHERE user_id = ? AND tokens >= 1
         """, (prize, new_losses, today, user_id))
+        
+        if cursor.rowcount == 0:
+            return "NO_TOKEN", 0
+            
         await db.commit()
 
         cursor = await db.execute("SELECT coins, tokens FROM users WHERE user_id = ?", (user_id,))
