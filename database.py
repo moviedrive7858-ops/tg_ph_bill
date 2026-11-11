@@ -245,15 +245,16 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
         if player2_id != owner_id and p2_coins - 50 < 300:
             return False, "P2_INSUFFICIENT"
 
+        # Python local time ဖြင့် တိုက်ရိုက် Parameter ပေးပြီး စစ်ဆေးခြင်း (Timezone mismatch မဖြစ်စေရန်)
         if player1_id != owner_id and player2_id != owner_id:
             c = await db.execute(
                 """
                 SELECT match_time FROM duels 
                 WHERE ((player1_id = ? AND player2_id = ?) OR (player1_id = ? AND player2_id = ?))
-                  AND match_time >= datetime('now', '-10 minutes')
+                  AND match_time >= ?
                 ORDER BY id DESC
                 """,
-                (player1_id, player2_id, player2_id, player1_id)
+                (player1_id, player2_id, player2_id, player1_id, ten_mins_ago)
             )
             rows = await c.fetchall()
             if len(rows) >= 3:
