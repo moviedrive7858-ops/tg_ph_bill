@@ -366,7 +366,7 @@ async def finish_duel(match_id: str):
 
     w_mention = f'<a href="tg://user?id={w_id}">{clean_name(w_name)}</a>'
     l_mention = f'<a href="tg://user?id={l_id}">{clean_name(l_name)}</a>'
-    announce_win_text = f"🎉 {w_mention} မှ {l_mention} ထံမှ <b>+၄၀ ကျပ်</b> အနိုင်ရရှိသွားပါသည်! 👑"
+    announce_win_text = f"🎉 {w_mention} သည် {l_mention} ထံမှ <b>+၄၀ ကျပ်</b> အနိုင်ရရှိသွားပါသည်! 👑"
 
     try:
         await bot.send_message(
