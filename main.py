@@ -8,8 +8,8 @@ import html
 from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.filters import Command, ChatMemberUpdatedFilter, StateFilter, KICKED, LEFT, RESTRICTED, MEMBER, ADMINISTRATOR, CREATOR
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ChatMemberUpdated
+from aiogram.filters import Command, StateFilter
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -22,8 +22,8 @@ ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))
 
 # 📌 Group နှင့် Topic ID များ
 SPIN_GROUP_ID = -1002672484902
-GENERAL_TOPIC_ID = 1          # စာ ၁၀၀ ပြည့်လျှင် ကုတ်ချမည့် General Topic
-SPIN_TOPIC_ID = 1328866       # User များ သုံးမည့် Spin / Game / Gift / ကြေညာချက်များ Topic
+GENERAL_TOPIC_ID = 1          # General Topic (Forum များတွင် thread_id အဖြစ် None သို့မဟုတ် 1 သုံးသည်)
+SPIN_TOPIC_ID = 1328866       # User များ သုံးမည့် Spin / Game / Gift Topic
 
 if not BOT_TOKEN:
     raise ValueError("ERROR: Render Environment Variables တွင် BOT_TOKEN မသတ်မှတ်ရသေးပါ။")
@@ -52,7 +52,9 @@ chat_stats = {
 }
 
 def clean_name(name: str) -> str:
-    return html.escape(name or "User")
+    if not name:
+        return "User"
+    return html.escape(str(name))
 
 def generate_drop_code() -> str:
     letters = random.choices(string.ascii_uppercase, k=3)
@@ -167,7 +169,7 @@ def compare_shan_hands(p1: dict, p2: dict) -> str:
         
     if p1["card_count"] < p2["card_count"]:
         return "p1"
-    if p2["card_count"] < p1["card_count"]:
+    if p2["card_count"] < p2["card_count"]:
         return "p2"
         
     def card_rank_val(card):
@@ -179,19 +181,7 @@ def compare_shan_hands(p1: dict, p2: dict) -> str:
     p2_max = max(card_rank_val(c) for c in p2["cards"])
     return "p1" if p1_max > p2_max else "p2"
 
-@dp.chat_member(ChatMemberUpdatedFilter(member_status_changed=(LEFT | KICKED | RESTRICTED) >> (MEMBER | ADMINISTRATOR | CREATOR)))
-async def on_user_join(event: ChatMemberUpdated):
-    if event.chat.id != SPIN_GROUP_ID:
-        return
-    inviter = event.from_user
-    new_member = event.new_chat_member.user
-    if new_member.is_bot or inviter.is_bot or inviter.id == new_member.id:
-        return
-    await db.get_or_create_user(inviter.id, inviter.username, inviter.first_name)
-    await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
-    await db.record_invitation(inviter.id, new_member.id)
-
-# 👥 Member ဖိတ်ခေါ်မှု ပြည့်ပါက Spin Topic (1328866) ထဲတွင်သာ သီးသန့် ကြေညာပေးခြင်း
+# 👥 Member ဖိတ်ခေါ်မှု စနစ်
 @dp.message(F.new_chat_members)
 async def new_member_message_handler(message: types.Message):
     if message.chat.id != SPIN_GROUP_ID:
@@ -290,7 +280,7 @@ async def expire_duel_task(challenge_id: str, sent_msg: types.Message):
             pass
 
 # ==========================================================
-# 🃏 Shan Koe Mee Duel (/lucky) - SPIN_TOPIC_ID တွင်သာ ဆော့နိုင်သည်
+# 🃏 Shan Koe Mee Duel (/lucky)
 # ==========================================================
 @dp.message(Command("lucky"))
 async def cmd_lucky_duel(message: types.Message):
@@ -445,7 +435,7 @@ async def auto_delete_idle_menu(chat_id: int, message_id: int, user_id: int, del
         user_active_menu.pop(user_id, None)
 
 # ==========================================================
-# 🎰 Spin Menu (/spin) - SPIN_TOPIC_ID တွင်သာ ဖွင့်ခွင့်ပြုသည်
+# 🎰 Spin Menu (/spin)
 # ==========================================================
 @dp.message(Command("spin"))
 async def open_spin_menu(message: types.Message):
@@ -735,7 +725,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
 
     uid, operator, phone, _, r_type = res
     user_info = await db.get_or_create_user(uid, "", "")
-    user_name = clean_name(user_info[2] or "User")
+    user_name = clean_name(user_info[2] if user_info else "User")
 
     if r_type == "gift":
         updated_text = (
@@ -763,7 +753,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     await callback.message.edit_text(updated_text, parse_mode="HTML")
     await callback.answer("မှတ်တမ်းတင်ပြီးပါပြီ။")
 
-    # 📢 Announcement အားလုံးကို SPIN_TOPIC_ID (1328866) ထဲတွင်သာ ကြေညာပေးခြင်း
     try:
         await bot.send_message(
             chat_id=SPIN_GROUP_ID,
@@ -780,7 +769,7 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         pass
 
 # ==========================================================
-# 👑 Admin Commands (Owner Only - Admin Group သို့မဟုတ် မည်သည့်နေရာမဆို အသုံးပြုနိုင်သည်)
+# 👑 Admin Commands
 # ==========================================================
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
@@ -1057,17 +1046,15 @@ async def cmd_restore(message: types.Message):
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
 # ==========================================================
-# 💬 General Topic စကားဝိုင်းနှင့် Chat Drop စနစ်
-# GENERAL_TOPIC_ID = 1 (သို့မဟုတ် Root Chat) တွင်သာ စာရေတွက်ပြီး Drop Code ချပေးသည်
+# 💬 Chat Drop စနစ် (General Chat/Topic တွင်သာ အလုပ်လုပ်သည်)
 # ==========================================================
 @dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
     if message.chat.id != SPIN_GROUP_ID:
         return
 
-    msg_topic_id = message.message_thread_id
-    # General Topic (1 သို့မဟုတ် None) မဟုတ်ပါက ကျော်မည်
-    if msg_topic_id not in [GENERAL_TOPIC_ID, 1, None]:
+    # Spin Topic (1328866) တွင် ပို့သော မက်ဆေ့ခ်ျများကို Chat Drop ထဲ မထည့်ပါ
+    if message.message_thread_id == SPIN_TOPIC_ID:
         return
 
     user = message.from_user
@@ -1075,8 +1062,6 @@ async def handle_chat_activity(message: types.Message):
         return
 
     text = message.text or ""
-    # General Topic အတွက် Thread ID error မတက်စေရန် None ဖြင့် စာပို့ပေးခြင်း
-    target_thread_id = None if msg_topic_id in [1, None] else msg_topic_id
 
     # 🎯 Drop Code အား Reply ပြန်၍ ကောက်ယူခြင်း
     if message.reply_to_message:
@@ -1118,12 +1103,9 @@ async def handle_chat_activity(message: types.Message):
             )
 
             try:
-                await bot.send_message(chat_id=message.chat.id, message_thread_id=target_thread_id, text=congrats_text, parse_mode="HTML")
+                await bot.send_message(chat_id=message.chat.id, text=congrats_text, parse_mode="HTML")
             except Exception:
-                try:
-                    await bot.send_message(chat_id=message.chat.id, text=congrats_text, parse_mode="HTML")
-                except Exception:
-                    pass
+                pass
 
             try:
                 await bot.edit_message_text(chat_id=message.chat.id, message_id=drop_msg_id, text=congrats_text, parse_mode="HTML")
@@ -1153,7 +1135,7 @@ async def handle_chat_activity(message: types.Message):
         if trigger_drop:
             chat_stats["count"] = 0
 
-    # 🎁 စာကြောင်းရေ ၁၀၀ ပြည့်ပါက General Topic တွင် Drop ချပေးခြင်း
+    # 🎁 စာကြောင်းရေ ၁၀၀ ပြည့်ပါက Drop ချပေးခြင်း
     if trigger_drop:
         drop_code = generate_drop_code()
         d_type, _ = get_random_drop_reward()
@@ -1165,19 +1147,13 @@ async def handle_chat_activity(message: types.Message):
         try:
             drop_msg = await bot.send_message(
                 chat_id=message.chat.id,
-                message_thread_id=target_thread_id,
                 text=f"🎁 <b>Lucky Code :</b> <code>{drop_code}</code>",
                 parse_mode="HTML"
             )
-        except Exception:
-            drop_msg = await bot.send_message(
-                chat_id=message.chat.id,
-                text=f"🎁 <b>Lucky Code :</b> <code>{drop_code}</code>",
-                parse_mode="HTML"
-            )
-
-        chat_stats["drop_message_id"] = drop_msg.message_id
-        asyncio.create_task(expire_drop_code_task(drop_code, delay=180))
+            chat_stats["drop_message_id"] = drop_msg.message_id
+            asyncio.create_task(expire_drop_code_task(drop_code, delay=180))
+        except Exception as e:
+            print(f"Error dropping code: {e}")
 
 # ==========================================================
 # 🚀 Startup
@@ -1190,7 +1166,7 @@ async def main():
     asyncio.create_task(start_web_server())
     asyncio.create_task(auto_backup_task())
     print(f"Bot @{BOT_USERNAME} is successfully running...")
-    await dp.start_polling(bot, allowed_updates=["message", "callback_query", "chat_member"])
+    await dp.start_polling(bot, allowed_updates=["message", "callback_query"])
 
 if __name__ == "__main__":
     asyncio.run(main())
