@@ -99,7 +99,6 @@ async def start_web_server():
     site = web.TCPSite(runner, "0.0.0.0", port)
     await site.start()
 
-# SQLite WAL mode safe backup function
 def create_safe_backup_file(backup_filename: str):
     src = sqlite3.connect(db.DB_NAME)
     dst = sqlite3.connect(backup_filename)
@@ -150,7 +149,7 @@ async def expire_challenge_task(challenge_id: str, chat_id: int, message_id: int
                 pass
 
 # ==========================================================
-# 🃏 Shan Koe Mee Helper Functions
+# 🃏 Shan Koe Mee Helper Functions (Official Hierarchy)
 # ==========================================================
 SUITS = ["♣️", "♦️", "♥️", "♠️"]
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -175,22 +174,29 @@ def get_hand_title(hand: list) -> str:
         return "💀 ဘူး (၀)"
     return f"{total_score} မှတ်"
 
-def compare_shan_hands(p1_hand: list, p2_hand: list) -> str:
-    s1 = calculate_hand_score(p1_hand)
-    s2 = calculate_hand_score(p2_hand)
-    if s1 > s2:
-        return "p1"
-    if s2 > s1:
-        return "p2"
-    if len(p1_hand) < len(p2_hand):
-        return "p1"
-    if len(p2_hand) < len(p1_hand):
-        return "p2"
+def get_hand_rank(hand: list) -> tuple:
+    score = calculate_hand_score(hand)
+    is_two = (len(hand) == 2)
+    # ရှမ်းကိုး (၂ ကတ် ၉ မှတ်)
+    if is_two and score == 9:
+        tier = 100
+    # ရှစ်ဒေါင်း (၂ ကတ် ၈ မှတ် - ၃ ကတ် ၉ မှတ်ထက် ပိုကြီးသည်)
+    elif is_two and score == 8:
+        tier = 95
+    else:
+        # ၂ ကတ်သည် ၃ ကတ်ထက် ဦးစားပေး အမှတ်တူလျှင် သာသည်
+        tier = (score * 8) + (2 if is_two else 1)
 
     def card_val(c):
         return (RANKS.index(c[0]) * 4) + SUITS.index(c[1])
+    
+    max_c = max(card_val(c) for c in hand)
+    return (tier, max_c)
 
-    return "p1" if max(card_val(c) for c in p1_hand) > max(card_val(c) for c in p2_hand) else "p2"
+def compare_shan_hands(p1_hand: list, p2_hand: list) -> str:
+    r1 = get_hand_rank(p1_hand)
+    r2 = get_hand_rank(p2_hand)
+    return "p1" if r1 >= r2 else "p2"
 
 @dp.message(F.new_chat_members)
 async def new_member_message_handler(message: types.Message):
@@ -286,6 +292,7 @@ async def finish_duel(match_id: str):
     p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
     deck = duel["deck"]
 
+    # ၂၀ စက္ကန့်ပြည့်၍ အော်တိုဆွဲရမည့် ၄ မှတ်နှင့်အောက်များ ဆွဲပေးခြင်း
     if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
         p1_hand.append(deck.pop())
     if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
@@ -387,7 +394,6 @@ async def cmd_lucky_duel(message: types.Message):
         "msg_id": sent_msg.message_id,
         "chat_id": message.chat.id
     }
-    # စက္ကန့် ၆၀ အတွင်း ဘယ်သူမှ လက်မခံပါက စိန်ခေါ်မှုကို ဖျက်ပေးမည့် Task
     asyncio.create_task(expire_challenge_task(challenge_id, message.chat.id, sent_msg.message_id, delay=60))
 
 @dp.callback_query(lambda c: c.data.startswith("accept_duel_"))
@@ -429,6 +435,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     p2_hand = [deck.pop(), deck.pop()]
     match_id = f"m_{challenger_id}_{accepter.id}_{int(time.time())}"
 
+    # ၇ မှတ်နှင့်အထက်ဖြစ်ပါက Stand ပြီးသားအဖြစ် သတ်မှတ်ခြင်း
     p1_auto = calculate_hand_score(p1_hand) >= 7
     p2_auto = calculate_hand_score(p2_hand) >= 7
 
@@ -516,7 +523,7 @@ async def handle_hit_card(callback: types.CallbackQuery):
 
     initial_score = calculate_hand_score(hand)
     if initial_score >= 7:
-        await callback.answer("၇ နှင့်အထက် ဖြစ်၍ ဖဲထပ်ဆွဲ၍ မရပါ", show_alert=True)
+        await callback.answer("၇ နှင့်အထက် ဖြစ်၍ ဖဲထပ်ဆွဲ၍ မရပါ (ဒေါင်း/ရှမ်းကိုး)", show_alert=True)
         duel[f"{player_key}_action"] = True
     else:
         if len(hand) == 2 and duel["deck"]:
@@ -543,8 +550,16 @@ async def handle_stand_card(callback: types.CallbackQuery):
         return
 
     player_key = "p1" if uid == duel["p1_id"] else "p2"
+    hand = duel[f"{player_key}_hand"]
+
     if duel[f"{player_key}_action"]:
         await callback.answer("သင် ရွေးချယ်ပြီးပါပြီ!", show_alert=True)
+        return
+
+    # ၄ မှတ်နှင့်အောက်ဖြစ်ပါက စည်းမျဉ်းအရ မဖြစ်မနေ ဖဲဆွဲရမည်
+    score = calculate_hand_score(hand)
+    if len(hand) == 2 and score <= 4:
+        await callback.answer(f"⚠️ သင့်အမှတ်မှာ {score} မှတ် ဖြစ်နေ၍ မဆွဲဘဲ နေ၍မရပါ (ဖဲဆွဲပေးပါ)!", show_alert=True)
         return
 
     duel[f"{player_key}_action"] = True
@@ -762,6 +777,10 @@ async def handle_reward_choice(callback: types.CallbackQuery, state: FSMContext)
 
 @dp.message(RedeemState.waiting_for_gift_username)
 async def submit_gift_username(message: types.Message, state: FSMContext):
+    if not message.text:
+        await message.reply("ကျေးဇူးပြု၍ Username ကို စာသားဖြင့်သာ ရိုက်ပို့ပေးပါ။")
+        return
+
     target_un = message.text.strip()
     if not target_un.startswith("@"):
         target_un = f"@{target_un}"
@@ -811,6 +830,10 @@ async def select_operator(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.message(RedeemState.waiting_for_phone)
 async def submit_phone(message: types.Message, state: FSMContext):
+    if not message.text:
+        await message.reply("ကျေးဇူးပြု၍ ဖုန်းနံပါတ်ကို ဂဏန်းစာသားဖြင့်သာ ပို့ပေးပါ။")
+        return
+
     phone = message.text.strip()
     data = await state.get_data()
     operator = data.get("operator")
@@ -1160,9 +1183,23 @@ async def cmd_restore(message: types.Message):
     doc = message.reply_to_message.document
     if not doc.file_name.endswith(".db"):
         return
-    file_info = await bot.get_file(doc.file_id)
-    await bot.download_file(file_info.file_path, destination=db.DB_NAME)
-    await message.reply("✅ <b>Database Restore အောင်မြင်ပါပြီ!</b>", parse_mode="HTML")
+
+    status_msg = await message.reply("⏳ Database ဖိုင်ကို ပြန်လည် ထည့်သွင်းနေပါသည်...")
+    try:
+        # WAL files များကို ရှင်းထုတ်ပြီးမှ အစားထိုးခြင်း (Corruption ကာကွယ်ရန်)
+        for extra in ["-wal", "-shm"]:
+            f = f"{db.DB_NAME}{extra}"
+            if os.path.exists(f):
+                try:
+                    os.remove(f)
+                except Exception:
+                    pass
+
+        file_info = await bot.get_file(doc.file_id)
+        await bot.download_file(file_info.file_path, destination=db.DB_NAME)
+        await status_msg.edit_text("✅ <b>Database Restore အောင်မြင်ပါပြီ!</b>", parse_mode="HTML")
+    except Exception as e:
+        await status_msg.edit_text(f"❌ Restore Error: {e}")
 
 # ==========================================================
 # 💬 Chat Drop စနစ် (General Chat)
@@ -1265,7 +1302,6 @@ async def main():
     asyncio.create_task(start_web_server())
     asyncio.create_task(auto_backup_task())
     print(f"Bot @{BOT_USERNAME} is successfully running...")
-    # Chat member changes ကိုပါ ပေါင်းထည့်ပြီး စနစ်တကျ register လုပ်ထားသည်
     await dp.start_polling(bot, allowed_updates=["message", "callback_query", "chat_member"])
 
 if __name__ == "__main__":
