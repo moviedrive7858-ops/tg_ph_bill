@@ -218,7 +218,7 @@ async def new_member_message_handler(message: types.Message):
                 await bot.send_message(
                     chat_id=SPIN_GROUP_ID,
                     message_thread_id=SPIN_TOPIC_ID,
-                    text=f"🎟️ <b>{clean_name(inviter.first_name)}</b> သည် မိတ်ဆွေဖိတ်ခေါ်မှုပြည့်၍ Spin Token ၁ ခု ရရှိပါသည်!",
+                    text=f"🎟️ <b>{clean_name(inviter.first_name)}</b> သည် သူငယ်ချင်းအသစ်ကို ဖိတ်ခေါ်နိုင်ခဲ့၍ Spin Token ၁ ခု ရရှိပါသည်!",
                     parse_mode="HTML"
                 )
             except Exception:
@@ -274,7 +274,7 @@ async def cmd_gift_coin(message: types.Message):
         f"🎁 <b>လက်ဆောင်ပေးပို့မှု အောင်မြင်ပါသည်!</b>\n"
         f"👤 ပေးပို့သူ: {s_mention}\n"
         f"🎯 လက်ခံသူ: {r_mention}\n"
-        f"💰 ပမာဏ: <b>+၄၀ ကျပ်</b> ရောက်ရှိသွားပါပြီ! (လွှဲခ ၁၀ ကျပ် ဖြတ်တောက်ပြီး) 🎉"
+        f"💰 ပမာဏ: <b>+၄၀ ကျပ်</b> ရောက်ရှိသွားပါပြီ! 🎉"
     )
 
     await bot.send_message(
