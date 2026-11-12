@@ -1308,7 +1308,7 @@ async def cmd_restore(message: types.Message):
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
 # ==========================================================
-# 💬 Chat Drop စနစ် (General Chat)
+# 💬 Chat Drop စနစ် (General Chat - Reply ထောက်မှသာ Claim ရမည်)
 # ==========================================================
 @dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
