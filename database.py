@@ -275,7 +275,7 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
                 (player1_id, player2_id, player2_id, player1_id, ten_mins_ago)
             )
             rows = await c.fetchall()
-            if len(rows) >= 3:
+            if len(rows) >= 5:  # ၃ ပွဲ အစား ၅ ပွဲသို့ တိုးမြှင့်ခြင်း
                 return False, "PAIR_COOLDOWN_10M"
 
         return True, "ELIGIBLE"
