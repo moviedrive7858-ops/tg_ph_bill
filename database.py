@@ -191,7 +191,7 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
         res = await cursor.fetchone()
         return prize, res
 
-async def transfer_gift_coins(sender_id: int, receiver_id: int):
+async def transfer_gift_coins(sender_id: int, receiver_id: int, is_owner: bool = False):
     today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
     two_days_ago = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -200,29 +200,32 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int):
         row = await c.fetchone()
         sender_coins = row[0] if row else 0
 
-        if sender_coins - 50 < 300:
-            return False, "INSUFFICIENT_BALANCE", sender_coins
+        if not is_owner:
+            if sender_coins - 50 < 300:
+                return False, "INSUFFICIENT_BALANCE", sender_coins
 
-        c = await db.execute(
-            "SELECT COUNT(*) FROM transfers WHERE sender_id = ? AND receiver_id = ? AND created_at >= ?",
-            (sender_id, receiver_id, two_days_ago)
-        )
-        if (await c.fetchone())[0] > 0:
-            return False, "COOLDOWN_48H", sender_coins
+            c = await db.execute(
+                "SELECT COUNT(*) FROM transfers WHERE sender_id = ? AND receiver_id = ? AND created_at >= ?",
+                (sender_id, receiver_id, two_days_ago)
+            )
+            if (await c.fetchone())[0] > 0:
+                return False, "COOLDOWN_48H", sender_coins
 
-        c = await db.execute(
-            "SELECT COUNT(DISTINCT receiver_id) FROM transfers WHERE sender_id = ? AND created_at >= ?",
-            (sender_id, today_start)
-        )
-        if (await c.fetchone())[0] >= 3:
-            return False, "DAILY_LIMIT_REACHED", sender_coins
+            c = await db.execute(
+                "SELECT COUNT(DISTINCT receiver_id) FROM transfers WHERE sender_id = ? AND created_at >= ?",
+                (sender_id, today_start)
+            )
+            if (await c.fetchone())[0] >= 3:
+                return False, "DAILY_LIMIT_REACHED", sender_coins
 
-        cursor = await db.execute(
-            "UPDATE users SET coins = coins - 50 WHERE user_id = ? AND coins >= 350",
-            (sender_id,)
-        )
-        if cursor.rowcount == 0:
-            return False, "INSUFFICIENT_BALANCE", sender_coins
+            cursor = await db.execute(
+                "UPDATE users SET coins = coins - 50 WHERE user_id = ? AND coins >= 350",
+                (sender_id,)
+            )
+            if cursor.rowcount == 0:
+                return False, "INSUFFICIENT_BALANCE", sender_coins
+        else:
+            await db.execute("UPDATE users SET coins = MAX(0, coins - 50) WHERE user_id = ?", (sender_id,))
 
         await db.execute("UPDATE users SET coins = coins + 40 WHERE user_id = ?", (receiver_id,))
         await db.execute(
