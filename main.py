@@ -250,12 +250,16 @@ async def cmd_gift_coin(message: types.Message):
             pass
         return
 
-    async with gift_lock:
-        await db.get_or_create_user(sender.id, sender.username, sender.first_name)
-        await db.get_or_create_user(receiver.id, receiver.username, receiver.first_name)
+    try:
+        async with gift_lock:
+            await db.get_or_create_user(sender.id, sender.username, sender.first_name)
+            await db.get_or_create_user(receiver.id, receiver.username, receiver.first_name)
 
-        is_owner = (sender.id == OWNER_ID)
-        success, reason, balance = await db.transfer_gift_coins(sender.id, receiver.id, is_owner=is_owner)
+            is_owner = (sender.id == OWNER_ID)
+            success, reason, balance = await db.transfer_gift_coins(sender.id, receiver.id, is_owner=is_owner)
+    except Exception as e:
+        await message.reply(f"❌ Gift Error: {e}")
+        return
 
     if not success:
         if reason == "INSUFFICIENT_BALANCE":
@@ -895,7 +899,7 @@ async def submit_gift_username(message: types.Message, state: FSMContext):
     except Exception as e:
         print(f"DB Redemption Error (Gift): {e}")
         await db.add_coins(message.from_user.id, 1500)
-        await message.reply("❌ စနစ်အမှားအယွင်း ဖြစ်ပေါ်နေပါသည်။ ခဏနေမှ ပြန်လည်ကြိုးစားပါ။")
+        await message.reply(f"❌ စနစ်အမှားအယွင်း ဖြစ်ပေါ်နေပါသည် ({e})။ ပိုက်ဆံပြန်အမ်းပေးထားပါသည်။")
         await state.clear()
         return
 
@@ -963,7 +967,7 @@ async def submit_phone(message: types.Message, state: FSMContext):
     except Exception as e:
         print(f"DB Redemption Error (Bill): {e}")
         await db.add_coins(message.from_user.id, 1000)
-        await message.reply("❌ စနစ်အမှားအယွင်း ဖြစ်ပေါ်နေပါသည်။ ခဏနေမှ ပြန်လည်ကြိုးစားပါ။")
+        await message.reply(f"❌ စနစ်အမှားအယွင်း ဖြစ်ပေါ်နေပါသည် ({e})။ ပိုက်ဆံပြန်အမ်းပေးထားပါသည်။")
         await state.clear()
         return
 
@@ -1324,6 +1328,7 @@ async def cmd_restore(message: types.Message):
         await asyncio.to_thread(restore_sqlite_safely, temp_restore_file)
         if os.path.exists(temp_restore_file):
             os.remove(temp_restore_file)
+        await db.init_db()
         await status_msg.edit_text("✅ <b>Database Restore အောင်မြင်ပါပြီ!</b>", parse_mode="HTML")
     except Exception as e:
         await status_msg.edit_text(f"❌ Restore Error: {e}")
