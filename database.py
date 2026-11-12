@@ -196,6 +196,16 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int, is_owner: bool =
     two_days_ago = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
 
     async with get_db() as db:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS transfers (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                sender_id INTEGER NOT NULL,
+                receiver_id INTEGER NOT NULL,
+                amount INTEGER NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
         c = await db.execute("SELECT coins FROM users WHERE user_id = ?", (sender_id,))
         row = await c.fetchone()
         sender_coins = row[0] if row else 0
@@ -289,6 +299,10 @@ async def record_duel_match(winner_id: int, loser_id: int, player1_id: int, play
 
 async def create_redemption(user_id: int, operator: str, phone: str, reward_type: str = "bill"):
     async with get_db() as db:
+        try:
+            await db.execute("ALTER TABLE redemptions ADD COLUMN reward_type TEXT DEFAULT 'bill'")
+        except Exception:
+            pass
         cursor = await db.execute(
             "INSERT INTO redemptions (user_id, reward_type, operator, phone, status) VALUES (?, ?, ?, ?, 'pending')",
             (user_id, reward_type, operator, phone)
@@ -308,6 +322,10 @@ async def approve_redemption(redemption_id: int):
 
 async def get_user_pending_redemptions(user_id: int):
     async with get_db() as db:
+        try:
+            await db.execute("ALTER TABLE redemptions ADD COLUMN reward_type TEXT DEFAULT 'bill'")
+        except Exception:
+            pass
         cursor = await db.execute(
             "SELECT operator, phone, created_at, reward_type FROM redemptions WHERE user_id = ? AND status = 'pending' ORDER BY id DESC",
             (user_id,)
