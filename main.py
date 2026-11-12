@@ -19,7 +19,7 @@ import database as db
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 OWNER_ID = int(os.environ.get("OWNER_ID", 0))
-ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", 0))
+ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", -1003314192971))
 
 SPIN_GROUP_ID = -1002672484902
 GENERAL_TOPIC_ID = 1
@@ -793,6 +793,7 @@ async def handle_pending_btn(callback: types.CallbackQuery):
 async def start_cmd(message: types.Message, state: FSMContext):
     if message.chat.type != "private":
         return
+    await state.clear()
     if message.text and message.text.startswith("/start bill"):
         await bill_cmd(message, state)
         return
@@ -889,35 +890,45 @@ async def submit_gift_username(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    redemption_id = await db.create_redemption(message.from_user.id, "Profile Gift", target_un, reward_type="gift")
-
-    target_chat = ADMIN_LOG_GROUP_ID if ADMIN_LOG_GROUP_ID != 0 else OWNER_ID
-    if target_chat != 0:
-        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ Gift ပို့ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
-        ])
-        safe_name = clean_name(message.from_user.first_name)
-        safe_uname = f"@{html.escape(message.from_user.username)}" if message.from_user.username else safe_name
-        safe_target = html.escape(target_un)
-        
-        admin_log = (
-            f"🔔 [🧸 ဝက်ဝံရုပ် Gift လဲလှယ်မှု အော်ဒါ]\n\n"
-            f"အကောင့်: {safe_uname} (<code>{message.from_user.id}</code>)\n"
-            f"ပို့ပေးရမည့် Username: <code>{safe_target}</code>\n"
-            f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        try:
-            await bot.send_message(chat_id=target_chat, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
-        except Exception as e:
-            print(f"Admin Log Send Error (Gift): {e}")
-            if OWNER_ID != 0 and target_chat != OWNER_ID:
-                try:
-                    await bot.send_message(chat_id=OWNER_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
-                except Exception:
-                    pass
+    try:
+        redemption_id = await db.create_redemption(message.from_user.id, "Profile Gift", target_un, reward_type="gift")
+    except Exception as e:
+        print(f"DB Redemption Error (Gift): {e}")
+        await db.add_coins(message.from_user.id, 1500)
+        await message.reply("❌ စနစ်အမှားအယွင်း ဖြစ်ပေါ်နေပါသည်။ ခဏနေမှ ပြန်လည်ကြိုးစားပါ။")
+        await state.clear()
+        return
 
     await message.reply("✅ <b>တောင်းဆိုမှု အောင်မြင်ပါသည်!</b> Admin မှ စစ်ဆေး၍ ပို့ပေးပါလိမ့်မည်။", parse_mode="HTML")
     await state.clear()
+
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Gift ပို့ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
+    ])
+    safe_name = clean_name(message.from_user.first_name)
+    safe_uname = f"@{html.escape(message.from_user.username)}" if message.from_user.username else safe_name
+    safe_target = html.escape(target_un)
+
+    admin_log = (
+        f"🔔 [🧸 ဝက်ဝံရုပ် Gift လဲလှယ်မှု အော်ဒါ]\n\n"
+        f"အကောင့်: {safe_uname} (<code>{message.from_user.id}</code>)\n"
+        f"ပို့ပေးရမည့် Username: <code>{safe_target}</code>\n"
+        f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    sent_to_admin = False
+    if ADMIN_LOG_GROUP_ID != 0:
+        try:
+            await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
+            sent_to_admin = True
+        except Exception as e:
+            print(f"Admin Log Group Send Error (Gift): {e}")
+
+    if not sent_to_admin and OWNER_ID != 0:
+        try:
+            await bot.send_message(chat_id=OWNER_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
+        except Exception as e:
+            print(f"Owner DM Send Error (Gift): {e}")
 
 @dp.callback_query(RedeemState.waiting_for_operator, lambda c: c.data.startswith("op_"))
 async def select_operator(callback: types.CallbackQuery, state: FSMContext):
@@ -947,37 +958,47 @@ async def submit_phone(message: types.Message, state: FSMContext):
         await state.clear()
         return
 
-    redemption_id = await db.create_redemption(message.from_user.id, operator, phone, reward_type="bill")
-
-    target_chat = ADMIN_LOG_GROUP_ID if ADMIN_LOG_GROUP_ID != 0 else OWNER_ID
-    if target_chat != 0:
-        admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ ဖြည့်ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
-        ])
-        safe_name = clean_name(message.from_user.first_name)
-        safe_uname = f"@{html.escape(message.from_user.username)}" if message.from_user.username else safe_name
-        safe_phone = html.escape(phone)
-        safe_op = html.escape(str(operator))
-
-        admin_log = (
-            f"🔔 [📱 ဖုန်းဘေလ် လဲလှယ်မှု အော်ဒါ]\n\n"
-            f"အကောင့်: {safe_uname} (<code>{message.from_user.id}</code>)\n"
-            f"အော်ပရေတာ: {safe_op}\n"
-            f"ဖုန်းနံပါတ်: <code>{safe_phone}</code>\n"
-            f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-        )
-        try:
-            await bot.send_message(chat_id=target_chat, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
-        except Exception as e:
-            print(f"Admin Log Send Error (Bill): {e}")
-            if OWNER_ID != 0 and target_chat != OWNER_ID:
-                try:
-                    await bot.send_message(chat_id=OWNER_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
-                except Exception:
-                    pass
+    try:
+        redemption_id = await db.create_redemption(message.from_user.id, operator, phone, reward_type="bill")
+    except Exception as e:
+        print(f"DB Redemption Error (Bill): {e}")
+        await db.add_coins(message.from_user.id, 1000)
+        await message.reply("❌ စနစ်အမှားအယွင်း ဖြစ်ပေါ်နေပါသည်။ ခဏနေမှ ပြန်လည်ကြိုးစားပါ။")
+        await state.clear()
+        return
 
     await message.reply("✅ တောင်းဆိုမှု အောင်မြင်ပါသည်။ Admin မှ စစ်ဆေး၍ ဖုန်းဘေလ် ဖြည့်ပေးပါလိမ့်မည်။")
     await state.clear()
+
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ ဖြည့်ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
+    ])
+    safe_name = clean_name(message.from_user.first_name)
+    safe_uname = f"@{html.escape(message.from_user.username)}" if message.from_user.username else safe_name
+    safe_phone = html.escape(phone)
+    safe_op = html.escape(str(operator))
+
+    admin_log = (
+        f"🔔 [📱 ဖုန်းဘေလ် လဲလှယ်မှု အော်ဒါ]\n\n"
+        f"အကောင့်: {safe_uname} (<code>{message.from_user.id}</code>)\n"
+        f"အော်ပရေတာ: {safe_op}\n"
+        f"ဖုန်းနံပါတ်: <code>{safe_phone}</code>\n"
+        f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
+
+    sent_to_admin = False
+    if ADMIN_LOG_GROUP_ID != 0:
+        try:
+            await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
+            sent_to_admin = True
+        except Exception as e:
+            print(f"Admin Log Group Send Error (Bill): {e}")
+
+    if not sent_to_admin and OWNER_ID != 0:
+        try:
+            await bot.send_message(chat_id=OWNER_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
+        except Exception as e:
+            print(f"Owner DM Send Error (Bill): {e}")
 
 @dp.callback_query(lambda c: c.data.startswith("approve_"))
 async def handle_approve_btn(callback: types.CallbackQuery):
