@@ -384,6 +384,12 @@ async def finish_duel(match_id: str):
 
     last_duel_created_time = time.time()
 
+def is_user_in_active_duel(user_id: int) -> bool:
+    for d_info in active_duels.values():
+        if user_id in (d_info.get("challenger_id"), d_info.get("p1_id"), d_info.get("p2_id")):
+            return True
+    return False
+
 @dp.message(Command("lucky"))
 async def cmd_lucky_duel(message: types.Message):
     global last_duel_created_time
@@ -392,24 +398,26 @@ async def cmd_lucky_duel(message: types.Message):
         return
 
     challenger = message.from_user
+    if not challenger or challenger.is_bot:
+        return
     is_owner = (challenger.id == OWNER_ID)
 
-    now = time.time()
-    if not is_owner:
-        if now - last_duel_created_time < 7:
-            rem = int(7 - (now - last_duel_created_time))
-            warn = await message.reply(f"⏳ ခဏစောင့်ပါဦး ({rem} စက္ကန့် ကျန်ပါသည်)")
-            await asyncio.sleep(3)
-            try:
-                await warn.delete()
-                await message.delete()
-            except Exception:
-                pass
-            return
+    async with duel_lock:
+        now = time.time()
+        if not is_owner:
+            if now - last_duel_created_time < 7:
+                rem = int(7 - (now - last_duel_created_time))
+                warn = await message.reply(f"⏳ ခဏစောင့်ပါဦး ({rem} စက္ကန့် ကျန်ပါသည်)")
+                await asyncio.sleep(3)
+                try:
+                    await warn.delete()
+                    await message.delete()
+                except Exception:
+                    pass
+                return
 
-    for c_id, d_info in list(active_duels.items()):
-        if d_info.get("challenger_id") == challenger.id:
-            msg = await message.reply("⚠️ သင်ဖွင့်ထားသော ကစားပွဲ ရှိနေဆဲဖြစ်ပါသည်!")
+        if is_user_in_active_duel(challenger.id):
+            msg = await message.reply("⚠️ သင်ဖွင့်ထားသော သို့မဟုတ် ကစားနေဆဲ ပွဲစဉ် ရှိနေပါသည်!")
             await asyncio.sleep(3)
             try:
                 await msg.delete()
@@ -418,36 +426,43 @@ async def cmd_lucky_duel(message: types.Message):
                 pass
             return
 
-    user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
-    if not is_owner and user_data[3] - 50 < 300:
-        msg = await message.reply("❌ လက်ကျန်ငွေ ၃၀၀ အောက်ရောက်မည်ဖြစ်၍ ကစားခွင့်မပြုပါ (အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည်)။")
-        await asyncio.sleep(4)
-        try:
-            await msg.delete()
-            await message.delete()
-        except Exception:
-            pass
-        return
+        user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
+        if not is_owner and user_data[3] - 50 < 300:
+            msg = await message.reply("❌ လက်ကျန်ငွေ ၃၀၀ အောက်ရောက်မည်ဖြစ်၍ ကစားခွင့်မပြုပါ (အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည်)။")
+            await asyncio.sleep(4)
+            try:
+                await msg.delete()
+                await message.delete()
+            except Exception:
+                pass
+            return
 
-    challenge_id = f"{challenger.id}_{int(time.time())}"
+        challenge_id = f"{challenger.id}_{int(time.time() * 1000)}"
+        active_duels[challenge_id] = {
+            "challenger_id": challenger.id,
+            "challenger_name": challenger.first_name,
+            "msg_id": None,
+            "chat_id": message.chat.id,
+            "thread_id": message.message_thread_id
+        }
+
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🃏 စိန်ခေါ်မှု လက်ခံမည် (၅၀ ကျပ်)", callback_data=f"accept_duel_{challenge_id}")]
     ])
 
-    sent_msg = await message.reply(
-        text=f"🃏 <b>{clean_name(challenger.first_name)}</b> က ရှမ်းကိုးမီးကစားရန် စိန်ခေါ်ထားပါသည်!",
-        reply_markup=kb,
-        parse_mode="HTML"
-    )
-
-    active_duels[challenge_id] = {
-        "challenger_id": challenger.id,
-        "challenger_name": challenger.first_name,
-        "msg_id": sent_msg.message_id,
-        "chat_id": message.chat.id,
-        "thread_id": message.message_thread_id
-    }
-    asyncio.create_task(expire_challenge_task(challenge_id, message.chat.id, sent_msg.message_id, delay=60))
+    try:
+        sent_msg = await message.reply(
+            text=f"🃏 <b>{clean_name(challenger.first_name)}</b> က ရှမ်းကိုးမီးကစားရန် စိန်ခေါ်ထားပါသည်!",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+        async with duel_lock:
+            if challenge_id in active_duels:
+                active_duels[challenge_id]["msg_id"] = sent_msg.message_id
+        asyncio.create_task(expire_challenge_task(challenge_id, message.chat.id, sent_msg.message_id, delay=60))
+    except Exception:
+        async with duel_lock:
+            active_duels.pop(challenge_id, None)
 
 @dp.callback_query(lambda c: c.data.startswith("accept_duel_"))
 async def handle_accept_duel(callback: types.CallbackQuery):
@@ -468,6 +483,10 @@ async def handle_accept_duel(callback: types.CallbackQuery):
             await callback.answer("မိမိစိန်ခေါ်မှုကို မိမိ ပြန်လက်ခံ၍ မရပါ!", show_alert=True)
             return
 
+        if is_user_in_active_duel(accepter.id):
+            await callback.answer("သင့်တွင် လက်ရှိဖွင့်ထားသော သို့မဟုတ် ကစားနေဆဲ ပွဲရှိနေပါသည်!", show_alert=True)
+            return
+
         await db.get_or_create_user(accepter.id, accepter.username, accepter.first_name)
         eligible, reason = await db.check_duel_eligibility(challenger_id, accepter.id, owner_id=OWNER_ID)
         
@@ -480,34 +499,34 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
         del active_duels[challenge_id]
 
+        deck = [(r, s) for r in RANKS for s in SUITS]
+        random.shuffle(deck)
+
+        p1_hand = [deck.pop(), deck.pop()]
+        p2_hand = [deck.pop(), deck.pop()]
+        match_id = f"m_{challenger_id}_{accepter.id}_{int(time.time() * 1000)}"
+
+        p1_natural = is_natural_win(p1_hand)
+        p2_natural = is_natural_win(p2_hand)
+
+        match_dict = {
+            "p1_id": challenger_id,
+            "p2_id": accepter.id,
+            "p1_name": challenger_name,
+            "p2_name": accepter.first_name,
+            "p1_hand": p1_hand,
+            "p2_hand": p2_hand,
+            "deck": deck,
+            "p1_action": p1_natural,
+            "p2_action": p2_natural,
+            "chat_id": callback.message.chat.id,
+            "msg_id": callback.message.message_id,
+            "thread_id": thread_id,
+            "timer_task": None
+        }
+        active_duels[match_id] = match_dict
+
     await callback.answer()
-
-    deck = [(r, s) for r in RANKS for s in SUITS]
-    random.shuffle(deck)
-
-    p1_hand = [deck.pop(), deck.pop()]
-    p2_hand = [deck.pop(), deck.pop()]
-    match_id = f"m_{challenger_id}_{accepter.id}_{int(time.time())}"
-
-    p1_natural = is_natural_win(p1_hand)
-    p2_natural = is_natural_win(p2_hand)
-
-    match_dict = {
-        "p1_id": challenger_id,
-        "p2_id": accepter.id,
-        "p1_name": challenger_name,
-        "p2_name": accepter.first_name,
-        "p1_hand": p1_hand,
-        "p2_hand": p2_hand,
-        "deck": deck,
-        "p1_action": p1_natural,
-        "p2_action": p2_natural,
-        "chat_id": callback.message.chat.id,
-        "msg_id": callback.message.message_id,
-        "thread_id": thread_id,
-        "timer_task": None
-    }
-    active_duels[match_id] = match_dict
 
     if p1_natural or p2_natural:
         await callback.message.edit_text(
@@ -530,8 +549,8 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
     await callback.message.edit_text(
         f"🃏 <b>ရှမ်းကိုးမီး ပွဲစဉ် စတင်ပါပြီ!</b>\n\n"
-        f"👤 {clean_name(challenger_name)}: [ 🂠 🂠 ]\n"
-        f"👤 {clean_name(accepter.first_name)}: [ 🂠 🂠 ]\n\n"
+        f"👤 {clean_name(challenger_name)}: [ 🂠 🂠 ] ⏳\n"
+        f"👤 {clean_name(accepter.first_name)}: [ 🂠 🂠 ] ⏳\n\n"
         f"⏳ <i>၂၀ စက္ကန့်အတွင်း မရွေးချယ်ပါက အော်တိုဖဲလှန်ပါမည်။</i>",
         reply_markup=kb,
         parse_mode="HTML"
@@ -539,6 +558,16 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
     task = asyncio.create_task(auto_resolve_duel(match_id))
     match_dict["timer_task"] = task
+
+def build_duel_board_text(duel: dict) -> str:
+    p1_status = "✅ ရွေးပြီး" if duel["p1_action"] else "⏳ စဉ်းစားနေသည်"
+    p2_status = "✅ ရွေးပြီး" if duel["p2_action"] else "⏳ စဉ်းစားနေသည်"
+    return (
+        f"🃏 <b>ရှမ်းကိုးမီး ပွဲစဉ် စတင်ပါပြီ!</b>\n\n"
+        f"👤 {clean_name(duel['p1_name'])}: [ 🂠 🂠 ] ({p1_status})\n"
+        f"👤 {clean_name(duel['p2_name'])}: [ 🂠 🂠 ] ({p2_status})\n\n"
+        f"⏳ <i>၂၀ စက္ကန့်အတွင်း မရွေးချယ်ပါက အော်တိုဖဲလှန်ပါမည်။</i>"
+    )
 
 @dp.callback_query(lambda c: c.data.startswith("peek_"))
 async def handle_peek_card(callback: types.CallbackQuery):
@@ -594,6 +623,15 @@ async def handle_hit_card(callback: types.CallbackQuery):
 
         if duel["p1_action"] and duel["p2_action"]:
             await finish_duel(match_id)
+        else:
+            try:
+                await callback.message.edit_text(
+                    build_duel_board_text(duel),
+                    reply_markup=callback.message.reply_markup,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
 
 @dp.callback_query(lambda c: c.data.startswith("stand_"))
 async def handle_stand_card(callback: types.CallbackQuery):
@@ -626,6 +664,15 @@ async def handle_stand_card(callback: types.CallbackQuery):
 
         if duel["p1_action"] and duel["p2_action"]:
             await finish_duel(match_id)
+        else:
+            try:
+                await callback.message.edit_text(
+                    build_duel_board_text(duel),
+                    reply_markup=callback.message.reply_markup,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
 
 # ==========================================================
 # 🎰 Spin Menu (/spin) - Spin Topic
