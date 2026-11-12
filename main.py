@@ -36,6 +36,7 @@ BOT_USERNAME = ""
 
 claim_lock = asyncio.Lock()
 duel_lock = asyncio.Lock()
+gift_lock = asyncio.Lock()
 
 active_duels = {}
 last_duel_created_time = 0
@@ -225,6 +226,9 @@ async def cmd_gift_coin(message: types.Message):
         return
 
     sender = message.from_user
+    if not sender or sender.is_bot:
+        return
+
     if not message.reply_to_message or not message.reply_to_message.from_user:
         help_msg = await message.reply("💡 <b>အသုံးပြုနည်း:</b> လက်ဆောင်ပေးလိုသူ၏ စာကို Reply ထောက်ပြီး <code>/gf</code> ဟု ရိုက်ပေးပါ။", parse_mode="HTML")
         await asyncio.sleep(4)
@@ -237,12 +241,21 @@ async def cmd_gift_coin(message: types.Message):
 
     receiver = message.reply_to_message.from_user
     if receiver.is_bot or receiver.id == sender.id:
+        err_msg = await message.reply("❌ မိမိကိုယ်တိုင် သို့မဟုတ် Bot များထံသို့ လွှဲ၍မရပါ။")
+        await asyncio.sleep(3)
+        try:
+            await err_msg.delete()
+            await message.delete()
+        except Exception:
+            pass
         return
 
-    await db.get_or_create_user(sender.id, sender.username, sender.first_name)
-    await db.get_or_create_user(receiver.id, receiver.username, receiver.first_name)
+    async with gift_lock:
+        await db.get_or_create_user(sender.id, sender.username, sender.first_name)
+        await db.get_or_create_user(receiver.id, receiver.username, receiver.first_name)
 
-    success, reason, balance = await db.transfer_gift_coins(sender.id, receiver.id)
+        is_owner = (sender.id == OWNER_ID)
+        success, reason, balance = await db.transfer_gift_coins(sender.id, receiver.id, is_owner=is_owner)
 
     if not success:
         if reason == "INSUFFICIENT_BALANCE":
@@ -269,12 +282,10 @@ async def cmd_gift_coin(message: types.Message):
         f"💰 ပမာဏ: <b>+၄၀ ကျပ်</b> ရောက်ရှိသွားပါပြီ! 🎉"
     )
 
-    await bot.send_message(
-        chat_id=message.chat.id,
-        message_thread_id=message.message_thread_id,
-        text=gift_announcement,
-        parse_mode="HTML"
-    )
+    try:
+        await message.reply(gift_announcement, parse_mode="HTML")
+    except Exception as e:
+        print(f"Gift Announcement Error: {e}")
 
 # ==========================================================
 # 🃏 Shan Koe Mee Duel (/lucky) - General Topic
@@ -348,13 +359,12 @@ async def finish_duel(match_id: str):
         f"👤 {clean_name(p2_name)}: {p2_cards_str} ({get_hand_title(p2_hand)})"
     )
 
+    send_kwargs = {"chat_id": duel["chat_id"], "parse_mode": "HTML"}
+    if thread_id:
+        send_kwargs["message_thread_id"] = thread_id
+
     try:
-        score_msg = await bot.send_message(
-            chat_id=duel["chat_id"],
-            message_thread_id=thread_id,
-            text=score_board_text,
-            parse_mode="HTML"
-        )
+        score_msg = await bot.send_message(text=score_board_text, **send_kwargs)
         asyncio.create_task(auto_delete_message(duel["chat_id"], score_msg.message_id, delay=30))
     except Exception as e:
         print(f"Send Duel Cards Error: {e}")
@@ -364,12 +374,7 @@ async def finish_duel(match_id: str):
     announce_win_text = f"🎉 {w_mention} သည် {l_mention} ထံမှ <b>+၄၀ ကျပ်</b> အနိုင်ရရှိသွားပါသည်! 👑"
 
     try:
-        await bot.send_message(
-            chat_id=duel["chat_id"],
-            message_thread_id=thread_id,
-            text=announce_win_text,
-            parse_mode="HTML"
-        )
+        await bot.send_message(text=announce_win_text, **send_kwargs)
     except Exception as e:
         print(f"Send Duel Announce Error: {e}")
 
@@ -425,9 +430,7 @@ async def cmd_lucky_duel(message: types.Message):
         [InlineKeyboardButton(text="🃏 စိန်ခေါ်မှု လက်ခံမည် (၅၀ ကျပ်)", callback_data=f"accept_duel_{challenge_id}")]
     ])
 
-    sent_msg = await bot.send_message(
-        chat_id=message.chat.id,
-        message_thread_id=message.message_thread_id,
+    sent_msg = await message.reply(
         text=f"🃏 <b>{clean_name(challenger.first_name)}</b> က ရှမ်းကိုးမီးကစားရန် စိန်ခေါ်ထားပါသည်!",
         reply_markup=kb,
         parse_mode="HTML"
@@ -557,67 +560,67 @@ async def handle_peek_card(callback: types.CallbackQuery):
 @dp.callback_query(lambda c: c.data.startswith("hit_"))
 async def handle_hit_card(callback: types.CallbackQuery):
     match_id = callback.data.replace("hit_", "")
-    duel = active_duels.get(match_id)
-    if not duel:
-        await callback.answer("ပွဲစဉ်ပြီးဆုံးသွားပါပြီ!", show_alert=True)
-        return
+    async with duel_lock:
+        duel = active_duels.get(match_id)
+        if not duel:
+            await callback.answer("ပွဲစဉ်ပြီးဆုံးသွားပါပြီ!", show_alert=True)
+            return
 
-    uid = callback.from_user.id
-    if uid not in [duel["p1_id"], duel["p2_id"]]:
-        await callback.answer("❌ သင်သည် ဤပွဲတွင် ပါဝင်သူမဟုတ်ပါ!", show_alert=True)
-        return
+        uid = callback.from_user.id
+        if uid not in [duel["p1_id"], duel["p2_id"]]:
+            await callback.answer("❌ သင်သည် ဤပွဲတွင် ပါဝင်သူမဟုတ်ပါ!", show_alert=True)
+            return
 
-    player_key = "p1" if uid == duel["p1_id"] else "p2"
-    hand = duel[f"{player_key}_hand"]
+        player_key = "p1" if uid == duel["p1_id"] else "p2"
+        hand = duel[f"{player_key}_hand"]
 
-    if duel[f"{player_key}_action"]:
-        await callback.answer("သင် ရွေးချယ်ပြီးပါပြီ!", show_alert=True)
-        return
+        if duel[f"{player_key}_action"]:
+            await callback.answer("သင် ရွေးချယ်ပြီးပါပြီ!", show_alert=True)
+            return
 
-    if is_natural_win(hand):
-        await callback.answer("ရှမ်းကိုး/ရှစ်ဒေါင်း ဖြစ်နေ၍ ဖဲဆွဲ၍ မရပါ!", show_alert=True)
-        duel[f"{player_key}_action"] = True
-    else:
-        if len(hand) == 2 and duel["deck"]:
-            hand.append(duel["deck"].pop())
-        duel[f"{player_key}_action"] = True
-        cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in hand])
-        await callback.answer(f"📥 ဖဲ ၁ ချပ်ဆွဲလိုက်ပါပြီ!\nလက်ရှိ: {cards_str} ({get_hand_title(hand)})", show_alert=True)
+        if is_natural_win(hand):
+            await callback.answer("ရှမ်းကိုး/ရှစ်ဒေါင်း ဖြစ်နေ၍ ဖဲဆွဲ၍ မရပါ!", show_alert=True)
+            duel[f"{player_key}_action"] = True
+        else:
+            if len(hand) == 2 and duel["deck"]:
+                hand.append(duel["deck"].pop())
+            duel[f"{player_key}_action"] = True
+            cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in hand])
+            await callback.answer(f"📥 ဖဲ ၁ ချပ်ဆွဲလိုက်ပါပြီ!\nလက်ရှိ: {cards_str} ({get_hand_title(hand)})", show_alert=True)
 
-    if duel["p1_action"] and duel["p2_action"]:
-        async with duel_lock:
+        if duel["p1_action"] and duel["p2_action"]:
             await finish_duel(match_id)
 
 @dp.callback_query(lambda c: c.data.startswith("stand_"))
 async def handle_stand_card(callback: types.CallbackQuery):
     match_id = callback.data.replace("stand_", "")
-    duel = active_duels.get(match_id)
-    if not duel:
-        await callback.answer("ပွဲစဉ်ပြီးဆုံးသွားပါပြီ!", show_alert=True)
-        return
+    async with duel_lock:
+        duel = active_duels.get(match_id)
+        if not duel:
+            await callback.answer("ပွဲစဉ်ပြီးဆုံးသွားပါပြီ!", show_alert=True)
+            return
 
-    uid = callback.from_user.id
-    if uid not in [duel["p1_id"], duel["p2_id"]]:
-        await callback.answer("❌ သင်သည် ဤပွဲတွင် ပါဝင်သူမဟုတ်ပါ!", show_alert=True)
-        return
+        uid = callback.from_user.id
+        if uid not in [duel["p1_id"], duel["p2_id"]]:
+            await callback.answer("❌ သင်သည် ဤပွဲတွင် ပါဝင်သူမဟုတ်ပါ!", show_alert=True)
+            return
 
-    player_key = "p1" if uid == duel["p1_id"] else "p2"
-    hand = duel[f"{player_key}_hand"]
+        player_key = "p1" if uid == duel["p1_id"] else "p2"
+        hand = duel[f"{player_key}_hand"]
 
-    if duel[f"{player_key}_action"]:
-        await callback.answer("သင် ရွေးချယ်ပြီးပါပြီ!", show_alert=True)
-        return
+        if duel[f"{player_key}_action"]:
+            await callback.answer("သင် ရွေးချယ်ပြီးပါပြီ!", show_alert=True)
+            return
 
-    score = calculate_hand_score(hand)
-    if len(hand) == 2 and score <= 4:
-        await callback.answer(f"⚠️ သင့်အမှတ်မှာ {score} မှတ် ဖြစ်နေ၍ မဆွဲဘဲ နေ၍မရပါ (ဖဲဆွဲပေးပါ)!", show_alert=True)
-        return
+        score = calculate_hand_score(hand)
+        if len(hand) == 2 and score <= 4:
+            await callback.answer(f"⚠️ သင့်အမှတ်မှာ {score} မှတ် ဖြစ်နေ၍ မဆွဲဘဲ နေ၍မရပါ (ဖဲဆွဲပေးပါ)!", show_alert=True)
+            return
 
-    duel[f"{player_key}_action"] = True
-    await callback.answer("✋ နေလိုက်ပါပြီ (ဖဲမဆွဲပါ)။", show_alert=True)
+        duel[f"{player_key}_action"] = True
+        await callback.answer("✋ နေလိုက်ပါပြီ (ဖဲမဆွဲပါ)။", show_alert=True)
 
-    if duel["p1_action"] and duel["p2_action"]:
-        async with duel_lock:
+        if duel["p1_action"] and duel["p2_action"]:
             await finish_duel(match_id)
 
 # ==========================================================
@@ -751,7 +754,6 @@ async def handle_spin(callback: types.CallbackQuery):
     except Exception:
         pass
 
-    # ဘေလ်မဲပေါက်ပါက ကြေညာသည့် ဂုဏ်ပြုစာ (ပြန်မဖျက်ဘဲ အမြဲထားရှိသည်)
     if result > 0:
         winner_mention = f"@{html.escape(callback.from_user.username)}" if callback.from_user.username else clean_name(callback.from_user.first_name)
         try:
@@ -785,15 +787,32 @@ async def handle_pending_btn(callback: types.CallbackQuery):
     await callback.answer(text, show_alert=True)
 
 # ==========================================================
-# 📱 /bill Command - Private Chat Only
+# 📱 /bill & /start Command - Private Chat Only
 # ==========================================================
+@dp.message(Command("start"))
+async def start_cmd(message: types.Message, state: FSMContext):
+    if message.chat.type != "private":
+        return
+    if message.text and message.text.startswith("/start bill"):
+        await bill_cmd(message, state)
+        return
+
+    user = await db.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
+    await message.reply(
+        f"👋 မင်္ဂလာပါ <b>{clean_name(message.from_user.first_name)}</b>!\n\n"
+        f"💰 သင့်လက်ကျန်ငွေ: <b>{user[3]} ကျပ်</b>\n"
+        f"🎟️ Spin Token: <b>{user[4]} ခု</b>\n\n"
+        f"ဖုန်းဘေလ် သို့မဟုတ် Gift လဲလှယ်ရန် /bill ကို နှိပ်ပါ။",
+        parse_mode="HTML"
+    )
+
 @dp.message(Command("bill"))
-@dp.message(Command("start"), F.text.startswith("/start bill"))
 async def bill_cmd(message: types.Message, state: FSMContext):
     if message.chat.type != "private":
         await message.reply("ဆုငွေလဲလှယ်ရန် Bot ၏ Private Chat တွင် /bill ဟု ရိုက်ပေးပါ။")
         return
 
+    await state.clear()
     user = await db.get_or_create_user(message.from_user.id, message.from_user.username, message.from_user.first_name)
     user_coins = user[3]
 
@@ -814,21 +833,26 @@ async def handle_reward_choice(callback: types.CallbackQuery, state: FSMContext)
     user = await db.get_or_create_user(callback.from_user.id, callback.from_user.username, callback.from_user.first_name)
     user_coins = user[3]
 
+    await callback.answer()
+
     if choice == "bear":
         if user_coins < 1500:
-            await callback.answer("ဝက်ဝံရုပ် Gift လဲရန် အနည်းဆုံး ၁,၅၀၀ ကျပ် လိုအပ်ပါသည်!", show_alert=True)
+            await callback.message.edit_text(f"❌ ဝက်ဝံရုပ် Gift လဲရန် အနည်းဆုံး ၁,၅၀၀ ကျပ် လိုအပ်ပါသည် (လက်ရှိ: {user_coins} ကျပ်)။")
+            await state.clear()
             return
 
         await callback.message.edit_text(
             "🧸 <b>ဝက်ဝံရုပ် Profile Gift လဲလှယ်ခြင်း (၁,၅၀၀ ကျပ်)</b>\n\n"
             "လက်ဆောင် ပို့ပေးရမည့် သင့် <b>Telegram Username</b> ကို ရိုက်ပို့ပေးပါ:\n"
-            "(ဥပမာ - <code>@username</code>)",
+            "(ဥပမာ - <code>@username</code>)\n\n"
+            "<i>ပယ်ဖျက်လိုပါက /cancel ဟု ရိုက်ပါ။</i>",
             parse_mode="HTML"
         )
         await state.set_state(RedeemState.waiting_for_gift_username)
     else:
         if user_coins < 1000:
-            await callback.answer("ဖုန်းဘေလ်လဲရန် အနည်းဆုံး ၁,၀၀၀ ကျပ် လိုအပ်ပါသည်!", show_alert=True)
+            await callback.message.edit_text(f"❌ ဖုန်းဘေလ်လဲရန် အနည်းဆုံး ၁,၀၀၀ ကျပ် လိုအပ်ပါသည် (လက်ရှိ: {user_coins} ကျပ်)။")
+            await state.clear()
             return
 
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -838,15 +862,26 @@ async def handle_reward_choice(callback: types.CallbackQuery, state: FSMContext)
         await callback.message.edit_text("သင့်ဖုန်း အော်ပရေတာကို ရွေးချယ်ပါ:", reply_markup=kb)
         await state.set_state(RedeemState.waiting_for_operator)
 
+@dp.message(Command("cancel"), StateFilter("*"))
+async def cancel_state_cmd(message: types.Message, state: FSMContext):
+    current_state = await state.get_state()
+    if current_state is not None:
+        await state.clear()
+        await message.reply("❌ လုပ်ဆောင်ချက်ကို ပယ်ဖျက်လိုက်ပါပြီ။")
+
 @dp.message(RedeemState.waiting_for_gift_username)
 async def submit_gift_username(message: types.Message, state: FSMContext):
-    if not message.text:
-        await message.reply("ကျေးဇူးပြု၍ Username ကို စာသားဖြင့်သာ ရိုက်ပို့ပေးပါ။")
+    if not message.text or message.text.startswith("/"):
+        await message.reply("ကျေးဇူးပြု၍ Username ကို စာသားဖြင့်သာ ရိုက်ပို့ပေးပါ (ပယ်ဖျက်ရန် /cancel)။")
         return
 
-    target_un = message.text.strip()
+    target_un = message.text.strip().split()[0]
     if not target_un.startswith("@"):
         target_un = f"@{target_un}"
+
+    if len(target_un) < 4:
+        await message.reply("❌ Username မှားယွင်းနေပါသည်။ ပြန်လည်ရိုက်ပို့ပေးပါ (ဥပမာ - @username)။")
+        return
 
     success, _ = await db.deduct_coins(message.from_user.id, 1500, min_remaining=0)
     if not success:
@@ -856,7 +891,8 @@ async def submit_gift_username(message: types.Message, state: FSMContext):
 
     redemption_id = await db.create_redemption(message.from_user.id, "Profile Gift", target_un, reward_type="gift")
 
-    if ADMIN_LOG_GROUP_ID != 0:
+    target_chat = ADMIN_LOG_GROUP_ID if ADMIN_LOG_GROUP_ID != 0 else OWNER_ID
+    if target_chat != 0:
         admin_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ Gift ပို့ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
         ])
@@ -871,29 +907,39 @@ async def submit_gift_username(message: types.Message, state: FSMContext):
             f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         try:
-            await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
+            await bot.send_message(chat_id=target_chat, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
         except Exception as e:
             print(f"Admin Log Send Error (Gift): {e}")
+            if OWNER_ID != 0 and target_chat != OWNER_ID:
+                try:
+                    await bot.send_message(chat_id=OWNER_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
+                except Exception:
+                    pass
 
     await message.reply("✅ <b>တောင်းဆိုမှု အောင်မြင်ပါသည်!</b> Admin မှ စစ်ဆေး၍ ပို့ပေးပါလိမ့်မည်။", parse_mode="HTML")
     await state.clear()
 
 @dp.callback_query(RedeemState.waiting_for_operator, lambda c: c.data.startswith("op_"))
 async def select_operator(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer()
     op = callback.data.split("_")[1]
     await state.update_data(operator=op)
-    await callback.message.edit_text(f"အော်ပရေတာ: {op}\n\nဘေလ်ထည့်လိုသော ဖုန်းနံပါတ်ကို ရိုက်ပို့ပေးပါ:")
+    await callback.message.edit_text(f"အော်ပရေတာ: <b>{op}</b>\n\nဘေလ်ထည့်လိုသော ဖုန်းနံပါတ်ကို ရိုက်ပို့ပေးပါ:\n(ဥပမာ - <code>09xxxxxxxxx</code>)", parse_mode="HTML")
     await state.set_state(RedeemState.waiting_for_phone)
 
 @dp.message(RedeemState.waiting_for_phone)
 async def submit_phone(message: types.Message, state: FSMContext):
-    if not message.text:
-        await message.reply("ကျေးဇူးပြု၍ ဖုန်းနံပါတ်ကို ဂဏန်းစာသားဖြင့်သာ ပို့ပေးပါ။")
+    if not message.text or message.text.startswith("/"):
+        await message.reply("ကျေးဇူးပြု၍ ဖုန်းနံပါတ်ကို ဂဏန်းစာသားဖြင့်သာ ပို့ပေးပါ (ပယ်ဖျက်ရန် /cancel)။")
         return
 
-    phone = message.text.strip()
+    phone = re.sub(r"[\s\-]", "", message.text.strip())
+    if not re.fullmatch(r"09\d{7,9}", phone):
+        await message.reply("❌ ဖုန်းနံပါတ် ပုံစံမှားယွင်းနေပါသည်။ 09 ဖြင့်စသော ဖုန်းနံပါတ် အမှန်ကို ရိုက်ပို့ပေးပါ။")
+        return
+
     data = await state.get_data()
-    operator = data.get("operator")
+    operator = data.get("operator", "Unknown")
 
     success, _ = await db.deduct_coins(message.from_user.id, 1000, min_remaining=0)
     if not success:
@@ -903,7 +949,8 @@ async def submit_phone(message: types.Message, state: FSMContext):
 
     redemption_id = await db.create_redemption(message.from_user.id, operator, phone, reward_type="bill")
 
-    if ADMIN_LOG_GROUP_ID != 0:
+    target_chat = ADMIN_LOG_GROUP_ID if ADMIN_LOG_GROUP_ID != 0 else OWNER_ID
+    if target_chat != 0:
         admin_kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="✅ ဖြည့်ပေးပြီးပြီ", callback_data=f"approve_{redemption_id}")]
         ])
@@ -920,9 +967,14 @@ async def submit_phone(message: types.Message, state: FSMContext):
             f"အချိန်: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
         )
         try:
-            await bot.send_message(chat_id=ADMIN_LOG_GROUP_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
+            await bot.send_message(chat_id=target_chat, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
         except Exception as e:
             print(f"Admin Log Send Error (Bill): {e}")
+            if OWNER_ID != 0 and target_chat != OWNER_ID:
+                try:
+                    await bot.send_message(chat_id=OWNER_ID, text=admin_log, reply_markup=admin_kb, parse_mode="HTML")
+                except Exception:
+                    pass
 
     await message.reply("✅ တောင်းဆိုမှု အောင်မြင်ပါသည်။ Admin မှ စစ်ဆေး၍ ဖုန်းဘေလ် ဖြည့်ပေးပါလိမ့်မည်။")
     await state.clear()
@@ -955,7 +1007,6 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     safe_phone = html.escape(str(phone))
     safe_operator = html.escape(str(operator))
 
-    # ဖုန်းဘေလ်ထုတ်ယူမှုနှင့် အရုပ်ထုတ်ယူမှု ဂုဏ်ပြုစာများ (ပြန်မဖျက်ဘဲ အမြဲထားရှိသည်)
     if r_type == "gift":
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! <b>{user_name}</b> သို့ 🧸 ဝက်ဝံရုပ် Profile Gift ပေးပို့ပြီးပါပြီ!"
         user_notify = f"🎉 သင်တောင်းဆိုထားသော 🧸 ဝက်ဝံရုပ် Profile Gift ကို {phone} သို့ ပို့ပေးပြီးပါပြီ!"
@@ -1226,6 +1277,14 @@ async def cmd_manual_backup(message: types.Message):
     except Exception as e:
         await message.reply(f"❌ Backup Error: {e}")
 
+def restore_sqlite_safely(temp_path: str):
+    src = sqlite3.connect(temp_path)
+    dst = sqlite3.connect(db.DB_NAME)
+    with dst:
+        src.backup(dst)
+    dst.close()
+    src.close()
+
 @dp.message(Command("restore"))
 async def cmd_restore(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -1237,17 +1296,13 @@ async def cmd_restore(message: types.Message):
         return
 
     status_msg = await message.reply("⏳ Database ဖိုင်ကို ပြန်လည် ထည့်သွင်းနေပါသည်...")
+    temp_restore_file = "temp_restore.db"
     try:
-        for extra in ["-wal", "-shm"]:
-            f = f"{db.DB_NAME}{extra}"
-            if os.path.exists(f):
-                try:
-                    os.remove(f)
-                except Exception:
-                    pass
-
         file_info = await bot.get_file(doc.file_id)
-        await bot.download_file(file_info.file_path, destination=db.DB_NAME)
+        await bot.download_file(file_info.file_path, destination=temp_restore_file)
+        await asyncio.to_thread(restore_sqlite_safely, temp_restore_file)
+        if os.path.exists(temp_restore_file):
+            os.remove(temp_restore_file)
         await status_msg.edit_text("✅ <b>Database Restore အောင်မြင်ပါပြီ!</b>", parse_mode="HTML")
     except Exception as e:
         await status_msg.edit_text(f"❌ Restore Error: {e}")
@@ -1297,12 +1352,7 @@ async def handle_chat_activity(message: types.Message):
 
                     congrats_text = f"🎁 <b>Claimed by {winner_mention}!</b> ({reward_text})"
                     try:
-                        await bot.send_message(
-                            chat_id=message.chat.id,
-                            message_thread_id=message.message_thread_id,
-                            text=congrats_text,
-                            parse_mode="HTML"
-                        )
+                        await message.reply(text=congrats_text, parse_mode="HTML")
                         await bot.delete_message(chat_id=message.chat.id, message_id=drop_msg_id)
                     except Exception:
                         pass
@@ -1334,12 +1384,14 @@ async def handle_chat_activity(message: types.Message):
             chat_stats["active_drop_code"] = drop_code
             chat_stats["drop_type"] = d_type
 
+        send_kwargs = {"chat_id": message.chat.id, "parse_mode": "HTML"}
+        if message.message_thread_id:
+            send_kwargs["message_thread_id"] = message.message_thread_id
+
         try:
             drop_msg = await bot.send_message(
-                chat_id=message.chat.id,
-                message_thread_id=message.message_thread_id,
                 text=f"🎁 <b>Lucky Code :</b> <code>{drop_code}</code>",
-                parse_mode="HTML"
+                **send_kwargs
             )
             async with claim_lock:
                 chat_stats["drop_message_id"] = drop_msg.message_id
