@@ -494,7 +494,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
             if reason in ["P1_INSUFFICIENT", "P2_INSUFFICIENT"]:
                 await callback.answer("ကစားသူတစ်ဦးတွင် လက်ကျန် ၃၅၀ မပြည့်တော့ပါ!", show_alert=True)
             elif reason == "PAIR_COOLDOWN_10M":
-                await callback.answer("ဤ Player နှင့် ၁၀ မိနစ်အတွင်း ၃ ပွဲဆော့ပြီးသွားသဖြင့် Cooldown စောင့်ပါ!", show_alert=True)
+                await callback.answer("ဤ Player နှင့် ၅ ပွဲ ဆော့ပြီးသွားသဖြင့် ၁၀ မိနစ် ပြန်စောင့်ပါ! အခြား Player နှင့် ဆက်ဆော့နေနိုင်ပါသည်။", show_alert=True)
             return
 
         del active_duels[challenge_id]
