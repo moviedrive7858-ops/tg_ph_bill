@@ -225,7 +225,7 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int, is_owner: bool =
                 "SELECT COUNT(DISTINCT receiver_id) FROM transfers WHERE sender_id = ? AND created_at >= ?",
                 (sender_id, today_start)
             )
-            if (await c.fetchone())[0] >= 3:
+            if (await c.fetchone())[0] >= 5:
                 return False, "DAILY_LIMIT_REACHED", sender_coins
 
             cursor = await db.execute(
