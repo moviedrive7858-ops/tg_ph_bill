@@ -178,7 +178,7 @@ def get_hand_title(hand: list) -> str:
     elif len(hand) == 2 and total_score == 8:
         return "⚡ ရှစ်ဒေါင်း (၈)"
     elif total_score == 0:
-        return "💀 ဘူး (၀)"
+        return "💀 ဘူ (၀)"
     return f"{total_score} မှတ်"
 
 def get_hand_rank(hand: list) -> tuple:
