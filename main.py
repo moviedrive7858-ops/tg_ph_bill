@@ -267,7 +267,7 @@ async def cmd_gift_coin(message: types.Message):
         elif reason == "COOLDOWN_48H":
             err_msg = await message.reply("❌ ဤ Member ထံသို့ ၄၈ နာရီအတွင်း ၁ ကြိမ်သာ ငွေလွှဲခွင့်ရှိပါသည်။")
         else:
-            err_msg = await message.reply("❌ တစ်ရက်လျှင် လူ ၃ ဦးထံသာ လွှဲခွင့်ရှိပါသည်။")
+            err_msg = await message.reply("❌ တစ်ရက်လျှင် လူ ၅ ဦးထံသာ လွှဲခွင့်ရှိပါသည်။")
         await asyncio.sleep(4)
         try:
             await err_msg.delete()
