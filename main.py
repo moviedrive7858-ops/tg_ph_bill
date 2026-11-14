@@ -41,7 +41,7 @@ gift_lock = asyncio.Lock()
 active_duels = {}
 last_duel_created_time = 0
 
-MESSAGE_TARGET = 100
+MESSAGE_TARGET = 130
 
 chat_stats = {
     "count": 0,
