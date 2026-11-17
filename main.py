@@ -1202,11 +1202,11 @@ async def handle_approve_btn(callback: types.CallbackQuery):
     safe_operator = html.escape(str(operator))
 
     if r_type == "gift":
-        announce_text = f"🎉 ဂုဏ်ယူပါတယ်! <b>{user_name}</b> သို့ <b>{safe_operator}</b> Profile Gift ပေးပို့ပြီးပါပြီ!"
-        user_notify = f"🎉 သင်တောင်းဆိုထားသော {operator} Profile Gift ကို {phone} သို့ ပို့ပေးပြီးပါပြီ!"
+        announce_text = f"🎉 ဂုဏ်ယူပါတယ်! <b>{user_name}</b> တောင်းဆိုထားသော အကောင့်ထဲသို့ <b>{safe_operator}</b> Profile Gift ကို ပေးပို့ပြီးပါပြီ!"
+        user_notify = f"🎉 သင်တောင်းဆိုထားသော {operator} Profile Gift ကို ပို့ပေးပြီးပါပြီ!"
     else:
-        announce_text = f"🎉 ဂုဏ်ယူပါတယ်! <b>{user_name}</b> သို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({safe_operator}) ထည့်ပေးပြီးပါပြီ!"
-        user_notify = f"✅ သင့်ထံသို့ ၁,၀၀၀ ကျပ် ဖုန်းဘေလ် ({operator}) ထည့်ပေးပြီးပါပြီ။"
+        announce_text = f"🎉 ဂုဏ်ယူပါတယ်! <b>{user_name}</b> တောင်းဆိုထားသော ဖုန်းနံပါတ်ထဲသို့ ဖုန်းဘေလ် ၁,၀၀၀ ကျပ် ({safe_operator}) ထည့်ပေးပြီးပါပြီ!"
+        user_notify = f"✅ သင့်ထုတ်ယူရန် တောင်းဆိုထားသော ဖုန်းဘေလ် ၁,၀၀၀ ကျပ် ({operator}) ကို ထည့်ပေးပြီးပါပြီ။"
 
     try:
         await callback.message.edit_text(f"✅ Approved: {user_name} ({safe_phone})", parse_mode="HTML")
