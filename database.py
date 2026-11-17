@@ -74,14 +74,15 @@ async def init_db():
         except Exception:
             pass
 
+        # လစဉ်ထွက်ငွေနှင့် စုစုပေါင်းထွက်ငွေ မှတ်သားရန် (ယခုမှစ၍ 0 ဖြင့် စတင်မည်)
         await db.execute("""
-            CREATE TABLE IF NOT EXISTS bot_settings (
-                key TEXT PRIMARY KEY,
-                value INTEGER DEFAULT 0
+            CREATE TABLE IF NOT EXISTS expense_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                amount INTEGER NOT NULL,
+                month_key TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
-        await db.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('total_budget', 0)")
-        await db.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('total_spent', 0)")
 
         await db.commit()
 
@@ -381,27 +382,34 @@ async def get_user_by_username(username: str):
         row = await cursor.fetchone()
         return row[0] if row else None
 
-async def get_budget_status():
+async def record_expense(amount: int):
+    current_month = datetime.now().strftime("%Y-%m")
     async with get_db() as db:
-        c1 = await db.execute("SELECT value FROM bot_settings WHERE key = 'total_budget'")
-        r1 = await c1.fetchone()
-        total_budget = r1[0] if r1 else 0
-
-        c2 = await db.execute("SELECT value FROM bot_settings WHERE key = 'total_spent'")
-        r2 = await c2.fetchone()
-        total_spent = r2[0] if r2 else 0
-
-        remaining = total_budget - total_spent
-        return total_budget, total_spent, remaining
-
-async def update_total_budget(amount: int):
-    async with get_db() as db:
-        await db.execute("UPDATE bot_settings SET value = MAX(0, value + ?) WHERE key = 'total_budget'", (amount,))
+        await db.execute(
+            "INSERT INTO expense_logs (amount, month_key) VALUES (?, ?)",
+            (amount, current_month)
+        )
         await db.commit()
-    return await get_budget_status()
 
-async def record_budget_spent(amount: int):
+async def get_financial_summary(owner_id: int = 0):
+    current_month = datetime.now().strftime("%Y-%m")
     async with get_db() as db:
-        await db.execute("UPDATE bot_settings SET value = value + ? WHERE key = 'total_spent'", (amount,))
-        await db.commit()
-    return await get_budget_status()
+        # ၁။ ယခုလ (၁ ရက် မှ လကုန်အထိ) ထွက်ငွေ
+        c_month = await db.execute(
+            "SELECT COALESCE(SUM(amount), 0) FROM expense_logs WHERE month_key = ?",
+            (current_month,)
+        )
+        monthly_spent = (await c_month.fetchone())[0]
+
+        # ၂။ စုစုပေါင်း ထွက်ငွေအားလုံး (ယခုမှစ၍)
+        c_total = await db.execute("SELECT COALESCE(SUM(amount), 0) FROM expense_logs")
+        total_spent = (await c_total.fetchone())[0]
+
+        # ၃။ မန်ဘာများအကောင့်ထဲရှိ မထုတ်ရသေးသော လက်ကျန်ငွေစုစုပေါင်း (Owner မပါ)
+        c_users = await db.execute(
+            "SELECT COALESCE(SUM(coins), 0) FROM users WHERE user_id != ?",
+            (owner_id,)
+        )
+        member_unclaimed = (await c_users.fetchone())[0]
+
+        return monthly_spent, total_spent, member_unclaimed
