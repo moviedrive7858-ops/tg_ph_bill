@@ -74,6 +74,15 @@ async def init_db():
         except Exception:
             pass
 
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS bot_settings (
+                key TEXT PRIMARY KEY,
+                value INTEGER DEFAULT 0
+            )
+        """)
+        await db.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('total_budget', 0)")
+        await db.execute("INSERT OR IGNORE INTO bot_settings (key, value) VALUES ('total_spent', 0)")
+
         await db.commit()
 
 async def get_or_create_user(user_id: int, username: str, first_name: str):
@@ -139,7 +148,7 @@ async def record_invitation(inviter_id: int, new_member_id: int) -> tuple[bool, 
         if await cursor.fetchone():
             return False, 0
         
-        await db.execute("INSERT INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
+        await db.execute("INSERT OR IGNORE INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
@@ -160,7 +169,6 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             return "NO_TOKEN", 0
         tokens, losses, coins = user
 
-        # ၃,၀၀၀ မှ ၁၀,၀၀၀ သို့ ပြောင်းလဲထားသည်
         if not is_owner and coins >= 10000:
             return "MAX_BALANCE_REACHED", coins
 
@@ -194,7 +202,6 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
 
 async def transfer_gift_coins(sender_id: int, receiver_id: int, is_owner: bool = False):
     today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
-    # ၄၈ နာရီမှ ၂၀ နာရီသို့ ပြောင်းလဲထားသည်
     cooldown_ago = (datetime.now() - timedelta(hours=20)).strftime("%Y-%m-%d %H:%M:%S")
 
     async with get_db() as db:
@@ -237,7 +244,12 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int, is_owner: bool =
             if cursor.rowcount == 0:
                 return False, "INSUFFICIENT_BALANCE", sender_coins
         else:
-            await db.execute("UPDATE users SET coins = MAX(0, coins - 50) WHERE user_id = ?", (sender_id,))
+            cursor = await db.execute(
+                "UPDATE users SET coins = coins - 50 WHERE user_id = ? AND coins >= 50",
+                (sender_id,)
+            )
+            if cursor.rowcount == 0:
+                return False, "OWNER_INSUFFICIENT", sender_coins
 
         await db.execute("UPDATE users SET coins = coins + 40 WHERE user_id = ?", (receiver_id,))
         await db.execute(
@@ -261,10 +273,19 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
         p1_coins = r1[0] if r1 else 0
         p2_coins = r2[0] if r2 else 0
 
-        if player1_id != owner_id and p1_coins - 50 < 300:
-            return False, "P1_INSUFFICIENT"
-        if player2_id != owner_id and p2_coins - 50 < 300:
-            return False, "P2_INSUFFICIENT"
+        if player1_id == owner_id:
+            if p1_coins < 50:
+                return False, "OWNER_INSUFFICIENT"
+        else:
+            if p1_coins - 50 < 300:
+                return False, "P1_INSUFFICIENT"
+
+        if player2_id == owner_id:
+            if p2_coins < 50:
+                return False, "OWNER_INSUFFICIENT"
+        else:
+            if p2_coins - 50 < 300:
+                return False, "P2_INSUFFICIENT"
 
         if player1_id != owner_id and player2_id != owner_id:
             c = await db.execute(
@@ -277,7 +298,6 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
                 (player1_id, player2_id, player2_id, player1_id, ten_mins_ago)
             )
             rows = await c.fetchall()
-            # ၅ ပွဲမှ ၁၀ ပွဲသို့ တိုးမြှင့်ထားသည်
             if len(rows) >= 10:
                 return False, "PAIR_COOLDOWN_10M"
 
@@ -341,12 +361,16 @@ async def get_top_10():
         return await cursor.fetchall()
 
 async def get_user_detail(user_id: int):
+    seven_days_ago = (datetime.now() - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
     async with get_db() as db:
         cursor = await db.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
         user = await cursor.fetchone()
         if not user:
             return None
-        c_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (user_id,))
+        c_cursor = await db.execute(
+            "SELECT COUNT(*) FROM invited_members WHERE inviter_id = ? AND joined_at >= ?",
+            (user_id, seven_days_ago)
+        )
         inv_count = (await c_cursor.fetchone())[0]
         return user, inv_count
 
@@ -356,3 +380,28 @@ async def get_user_by_username(username: str):
         cursor = await db.execute("SELECT user_id FROM users WHERE LOWER(username) = LOWER(?)", (clean_un,))
         row = await cursor.fetchone()
         return row[0] if row else None
+
+async def get_budget_status():
+    async with get_db() as db:
+        c1 = await db.execute("SELECT value FROM bot_settings WHERE key = 'total_budget'")
+        r1 = await c1.fetchone()
+        total_budget = r1[0] if r1 else 0
+
+        c2 = await db.execute("SELECT value FROM bot_settings WHERE key = 'total_spent'")
+        r2 = await c2.fetchone()
+        total_spent = r2[0] if r2 else 0
+
+        remaining = total_budget - total_spent
+        return total_budget, total_spent, remaining
+
+async def update_total_budget(amount: int):
+    async with get_db() as db:
+        await db.execute("UPDATE bot_settings SET value = MAX(0, value + ?) WHERE key = 'total_budget'", (amount,))
+        await db.commit()
+    return await get_budget_status()
+
+async def record_budget_spent(amount: int):
+    async with get_db() as db:
+        await db.execute("UPDATE bot_settings SET value = value + ? WHERE key = 'total_spent'", (amount,))
+        await db.commit()
+    return await get_budget_status()
