@@ -10,7 +10,7 @@ from datetime import datetime
 from aiohttp import web
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, FSInputFile, ChatMemberUpdated
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile, ChatMemberUpdated
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -167,12 +167,15 @@ async def auto_backup_task():
             if os.path.exists(db.DB_NAME) and ADMIN_LOG_GROUP_ID != 0:
                 temp_filename = f"backup_{today}.db"
                 await asyncio.to_thread(create_safe_backup_file, temp_filename)
-                backup_file = FSInputFile(temp_filename, filename=temp_filename)
-                await bot.send_document(
-                    chat_id=ADMIN_LOG_GROUP_ID,
-                    document=backup_file,
-                    caption=f"📦 Daily Database Backup ({today})"
-                )
+                if os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
+                    with open(temp_filename, "rb") as f:
+                        file_bytes = f.read()
+                    backup_file = BufferedInputFile(file_bytes, filename=temp_filename)
+                    await bot.send_document(
+                        chat_id=ADMIN_LOG_GROUP_ID,
+                        document=backup_file,
+                        caption=f"📦 Daily Database Backup ({today})"
+                    )
                 if os.path.exists(temp_filename):
                     os.remove(temp_filename)
         except Exception as e:
@@ -1230,16 +1233,18 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         else:
             spent_amount = 1500
 
-    _, _, rem_bud = await db.record_budget_spent(spent_amount)
+    await db.record_expense(spent_amount)
+    monthly_spent, total_spent, _ = await db.get_financial_summary(owner_id=OWNER_ID)
 
     try:
         await callback.message.edit_text(
             f"✅ Approved: {user_name} ({safe_phone})\n"
-            f"💸 ထုတ်ပေးငွေ: <b>{spent_amount:,} ကျပ်</b> | 🏦 ကျန်ငွေ: <b>{rem_bud:,} ကျပ်</b>",
+            f"💸 ယခုထုတ်ပေးငွေ: <b>{spent_amount:,} ကျပ်</b>\n"
+            f"📅 ယခုလထွက်ငွေ: <b>{monthly_spent:,} ကျပ်</b> | 🧾 စုစုပေါင်း: <b>{total_spent:,} ကျပ်</b>",
             parse_mode="HTML"
         )
     except Exception:
-        await callback.message.edit_text(f"✅ Approved: {uid} ({phone}) | Spent: {spent_amount} | Rem: {rem_bud}")
+        await callback.message.edit_text(f"✅ Approved: {uid} ({phone}) | Spent: {spent_amount}")
         
     await callback.answer("မှတ်တမ်းတင်ပြီးပါပြီ။")
 
@@ -1260,54 +1265,14 @@ async def cmd_check_budget(message: types.Message):
     if message.chat.id not in [ADMIN_LOG_GROUP_ID, OWNER_ID]:
         return
 
-    total_budget, total_spent, remaining = await db.get_budget_status()
+    month_label = datetime.now().strftime("%b %Y")
+    monthly_spent, total_spent, member_unclaimed = await db.get_financial_summary(owner_id=OWNER_ID)
+
     await message.reply(
-        f"🏦 <b>Bot ဘတ်ဂျက် (Budget) စာရင်းရှင်းတမ်း</b>\n\n"
-        f"💰 သတ်မှတ်ထည့်သွင်းငွေ: <b>{total_budget:,} ကျပ်</b>\n"
-        f"💸 ထုတ်ပေးပြီးစုစုပေါင်း: <b>{total_spent:,} ကျပ်</b>\n"
-        f"💵 လက်ကျန်ဘတ်ဂျက်: <b>{remaining:,} ကျပ်</b>",
-        parse_mode="HTML"
-    )
-
-@dp.message(Command("addbudget"))
-async def cmd_add_budget(message: types.Message):
-    if int(message.from_user.id) != OWNER_ID:
-        return
-    if message.chat.id not in [ADMIN_LOG_GROUP_ID, OWNER_ID]:
-        return
-
-    args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit() or int(args[1]) <= 0:
-        await message.reply("💡 <b>အသုံးပြုနည်း:</b> <code>/addbudget 50000</code>", parse_mode="HTML")
-        return
-
-    amount = int(args[1])
-    total_budget, total_spent, remaining = await db.update_total_budget(amount)
-    await message.reply(
-        f"✅ ဘတ်ဂျက်ထဲသို့ <b>+{amount:,} ကျပ်</b> ထပ်တိုးလိုက်ပါပြီ!\n\n"
-        f"💰 စုစုပေါင်းထည့်ငွေ: <b>{total_budget:,} ကျပ်</b>\n"
-        f"💵 လက်ကျန်ဘတ်ဂျက်: <b>{remaining:,} ကျပ်</b>",
-        parse_mode="HTML"
-    )
-
-@dp.message(Command("deductbudget"))
-async def cmd_deduct_budget(message: types.Message):
-    if int(message.from_user.id) != OWNER_ID:
-        return
-    if message.chat.id not in [ADMIN_LOG_GROUP_ID, OWNER_ID]:
-        return
-
-    args = message.text.split()
-    if len(args) < 2 or not args[1].isdigit() or int(args[1]) <= 0:
-        await message.reply("💡 <b>အသုံးပြုနည်း:</b> <code>/deductbudget 5000</code>", parse_mode="HTML")
-        return
-
-    amount = int(args[1])
-    total_budget, total_spent, remaining = await db.update_total_budget(-amount)
-    await message.reply(
-        f"✅ ဘတ်ဂျက်ထဲမှ <b>-{amount:,} ကျပ်</b> ပြန်နှုတ်လိုက်ပါပြီ!\n\n"
-        f"💰 စုစုပေါင်းထည့်ငွေ: <b>{total_budget:,} ကျပ်</b>\n"
-        f"💵 လက်ကျန်ဘတ်ဂျက်: <b>{remaining:,} ကျပ်</b>",
+        f"🏦 <b>Bot ငွေစာရင်း ရှင်းတမ်း</b>\n\n"
+        f"📅 ယခုလ ထွက်ငွေ ({month_label}): <b>{monthly_spent:,} ကျပ်</b>\n"
+        f"💸 စုစုပေါင်း ထွက်ငွေအားလုံး: <b>{total_spent:,} ကျပ်</b>\n"
+        f"👥 မန်ဘာများ လက်ကျန်စုစုပေါင်း: <b>{member_unclaimed:,} ကျပ်</b>",
         parse_mode="HTML"
     )
 
@@ -1542,17 +1507,31 @@ async def cmd_manual_backup(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
         return
     if not os.path.exists(db.DB_NAME):
+        await message.reply("❌ Database ဖိုင် မရှိသေးပါ။")
         return
+
     now_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     temp_filename = f"backup_manual_{now_str}.db"
     try:
         await asyncio.to_thread(create_safe_backup_file, temp_filename)
-        backup_file = FSInputFile(temp_filename, filename=temp_filename)
-        await message.reply_document(document=backup_file, caption=f"📦 Safe Backup ({now_str})")
-        if os.path.exists(temp_filename):
-            os.remove(temp_filename)
+        file_size = os.path.getsize(temp_filename) if os.path.exists(temp_filename) else 0
+        if file_size == 0:
+            await message.reply("❌ Backup ဖိုင် 0 Bytes ဖြစ်နေပါသည် (Data မရှိသေးပါ)။")
+            return
+
+        with open(temp_filename, "rb") as f:
+            file_bytes = f.read()
+
+        backup_file = BufferedInputFile(file_bytes, filename=temp_filename)
+        await message.reply_document(
+            document=backup_file,
+            caption=f"📦 Safe Backup ({now_str})\n📊 Size: {file_size / 1024:.1f} KB"
+        )
     except Exception as e:
         await message.reply(f"❌ Backup Error: {e}")
+    finally:
+        if os.path.exists(temp_filename):
+            os.remove(temp_filename)
 
 def restore_sqlite_safely(temp_path: str):
     src = sqlite3.connect(temp_path)
