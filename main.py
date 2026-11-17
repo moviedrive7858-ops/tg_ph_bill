@@ -122,7 +122,7 @@ async def announce_and_pin_both_topics(text: str):
         print(f"Pin Spin Topic Error: {e}")
 
     try:
-        gen_kwargs = {"chat_id": SPIN_GROUP_ID, "text": text, "parse_mode": "HTML"}
+        gen_kwargs = {"chat_id": SPIN_GROUP_ID, "text": text, "parse_mode="HTML"}
         if GENERAL_TOPIC_ID and GENERAL_TOPIC_ID != 1:
             gen_kwargs["message_thread_id"] = GENERAL_TOPIC_ID
         m_gen = await bot.send_message(**gen_kwargs)
@@ -333,7 +333,9 @@ async def cmd_gift_coin(message: types.Message):
         return
 
     if not success:
-        if reason == "INSUFFICIENT_BALANCE":
+        if reason == "OWNER_INSUFFICIENT":
+            err_msg = await message.reply("❌ Owner လက်ကျန်ငွေ ၅၀ ကျပ် မပြည့်တော့ပါသဖြင့် လွှဲ၍မရပါ။")
+        elif reason == "INSUFFICIENT_BALANCE":
             err_msg = await message.reply("❌ လက်ကျန်ငွေ ၃၀၀ အောက်ရောက်မည်ဖြစ်၍ လွှဲ၍မရပါ (အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည်)။")
         elif reason == "COOLDOWN_20H":
             err_msg = await message.reply("❌ ဤ Member ထံသို့ နာရီ ၂၀ အတွင်း ၁ ကြိမ်သာ ငွေလွှဲခွင့်ရှိပါသည်။")
@@ -492,15 +494,26 @@ async def cmd_lucky_duel(message: types.Message):
                 return
 
         user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
-        if not is_owner and user_data[3] - 50 < 300:
-            msg = await message.reply("❌ လက်ကျန်ငွေ ၃၀၀ အောက်ရောက်မည်ဖြစ်၍ ကစားခွင့်မပြုပါ (အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည်)။")
-            await asyncio.sleep(4)
-            try:
-                await msg.delete()
-                await message.delete()
-            except Exception:
-                pass
-            return
+        if is_owner:
+            if user_data[3] < 50:
+                msg = await message.reply("❌ Owner လက်ကျန်ငွေ ၅၀ ကျပ် မပြည့်တော့ပါသဖြင့် ကစားခွင့်မပြုပါ။")
+                await asyncio.sleep(4)
+                try:
+                    await msg.delete()
+                    await message.delete()
+                except Exception:
+                    pass
+                return
+        else:
+            if user_data[3] - 50 < 300:
+                msg = await message.reply("❌ လက်ကျန်ငွေ ၃၀၀ အောက်ရောက်မည်ဖြစ်၍ ကစားခွင့်မပြုပါ (အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည်)။")
+                await asyncio.sleep(4)
+                try:
+                    await msg.delete()
+                    await message.delete()
+                except Exception:
+                    pass
+                return
 
         challenge_id = f"{challenger.id}_{int(time.time() * 1000)}"
         active_duels[challenge_id] = {
@@ -552,7 +565,9 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         eligible, reason = await db.check_duel_eligibility(challenger_id, accepter.id, owner_id=OWNER_ID)
         
         if not eligible:
-            if reason in ["P1_INSUFFICIENT", "P2_INSUFFICIENT"]:
+            if reason == "OWNER_INSUFFICIENT":
+                await callback.answer("Owner လက်ကျန်ငွေ ၅၀ ကျပ် မပြည့်တော့ပါ!", show_alert=True)
+            elif reason in ["P1_INSUFFICIENT", "P2_INSUFFICIENT"]:
                 await callback.answer("ကစားသူတစ်ဦးတွင် လက်ကျန် ၃၅၀ မပြည့်တော့ပါ!", show_alert=True)
             elif reason == "PAIR_COOLDOWN_10M":
                 await callback.answer("ဤ Player နှင့် ၁၀ ပွဲ ဆော့ပြီးသွားသဖြင့် ၁၀ မိနစ် ပြန်စောင့်ပါ!", show_alert=True)
@@ -1208,10 +1223,25 @@ async def handle_approve_btn(callback: types.CallbackQuery):
         announce_text = f"🎉 ဂုဏ်ယူပါတယ်! <b>{user_name}</b> တောင်းဆိုထားသော ဖုန်းနံပါတ်ထဲသို့ ဖုန်းဘေလ် ၁,၀၀၀ ကျပ် ({safe_operator}) ထည့်ပေးပြီးပါပြီ!"
         user_notify = f"✅ သင့်ထုတ်ယူရန် တောင်းဆိုထားသော ဖုန်းဘေလ် ၁,၀၀၀ ကျပ် ({operator}) ကို ထည့်ပေးပြီးပါပြီ။"
 
+    spent_amount = 1000
+    if r_type == "gift":
+        for item in GIFT_ITEMS.values():
+            if item["name"] == operator:
+                spent_amount = item["price"]
+                break
+        else:
+            spent_amount = 1500
+
+    _, _, rem_bud = await db.record_budget_spent(spent_amount)
+
     try:
-        await callback.message.edit_text(f"✅ Approved: {user_name} ({safe_phone})", parse_mode="HTML")
+        await callback.message.edit_text(
+            f"✅ Approved: {user_name} ({safe_phone})\n"
+            f"💸 ထုတ်ပေးငွေ: <b>{spent_amount:,} ကျပ်</b> | 🏦 ကျန်ငွေ: <b>{rem_bud:,} ကျပ်</b>",
+            parse_mode="HTML"
+        )
     except Exception:
-        await callback.message.edit_text(f"✅ Approved: {uid} ({phone})")
+        await callback.message.edit_text(f"✅ Approved: {uid} ({phone}) | Spent: {spent_amount} | Rem: {rem_bud}")
         
     await callback.answer("မှတ်တမ်းတင်ပြီးပါပြီ။")
 
@@ -1225,6 +1255,64 @@ async def handle_approve_btn(callback: types.CallbackQuery):
 # ==========================================================
 # 👑 Admin Commands
 # ==========================================================
+@dp.message(Command("budget"))
+async def cmd_check_budget(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+    if message.chat.id not in [ADMIN_LOG_GROUP_ID, OWNER_ID]:
+        return
+
+    total_budget, total_spent, remaining = await db.get_budget_status()
+    await message.reply(
+        f"🏦 <b>Bot ဘတ်ဂျက် (Budget) စာရင်းရှင်းတမ်း</b>\n\n"
+        f"💰 သတ်မှတ်ထည့်သွင်းငွေ: <b>{total_budget:,} ကျပ်</b>\n"
+        f"💸 ထုတ်ပေးပြီးစုစုပေါင်း: <b>{total_spent:,} ကျပ်</b>\n"
+        f"💵 လက်ကျန်ဘတ်ဂျက်: <b>{remaining:,} ကျပ်</b>",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("addbudget"))
+async def cmd_add_budget(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+    if message.chat.id not in [ADMIN_LOG_GROUP_ID, OWNER_ID]:
+        return
+
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit() or int(args[1]) <= 0:
+        await message.reply("💡 <b>အသုံးပြုနည်း:</b> <code>/addbudget 50000</code>", parse_mode="HTML")
+        return
+
+    amount = int(args[1])
+    total_budget, total_spent, remaining = await db.update_total_budget(amount)
+    await message.reply(
+        f"✅ ဘတ်ဂျက်ထဲသို့ <b>+{amount:,} ကျပ်</b> ထပ်တိုးလိုက်ပါပြီ!\n\n"
+        f"💰 စုစုပေါင်းထည့်ငွေ: <b>{total_budget:,} ကျပ်</b>\n"
+        f"💵 လက်ကျန်ဘတ်ဂျက်: <b>{remaining:,} ကျပ်</b>",
+        parse_mode="HTML"
+    )
+
+@dp.message(Command("deductbudget"))
+async def cmd_deduct_budget(message: types.Message):
+    if int(message.from_user.id) != OWNER_ID:
+        return
+    if message.chat.id not in [ADMIN_LOG_GROUP_ID, OWNER_ID]:
+        return
+
+    args = message.text.split()
+    if len(args) < 2 or not args[1].isdigit() or int(args[1]) <= 0:
+        await message.reply("💡 <b>အသုံးပြုနည်း:</b> <code>/deductbudget 5000</code>", parse_mode="HTML")
+        return
+
+    amount = int(args[1])
+    total_budget, total_spent, remaining = await db.update_total_budget(-amount)
+    await message.reply(
+        f"✅ ဘတ်ဂျက်ထဲမှ <b>-{amount:,} ကျပ်</b> ပြန်နှုတ်လိုက်ပါပြီ!\n\n"
+        f"💰 စုစုပေါင်းထည့်ငွေ: <b>{total_budget:,} ကျပ်</b>\n"
+        f"💵 လက်ကျန်ဘတ်ဂျက်: <b>{remaining:,} ကျပ်</b>",
+        parse_mode="HTML"
+    )
+
 @dp.message(Command("top10"))
 async def cmd_top10(message: types.Message):
     if int(message.from_user.id) != OWNER_ID:
@@ -1276,7 +1364,7 @@ async def cmd_detail(message: types.Message):
         f"👤 အမည်: {clean_name(u[2])} ({u_display})\n"
         f"🆔 User ID: <code>{u[0]}</code>\n"
         f"💰 Bill: <b>{u[3]} ကျပ်</b> | 🎟️ Token: <b>{u[4]} ခု</b>\n"
-        f"👥 Add ခဲ့သူ: <b>{inv_count} ယောက်</b>",
+        f"👥 Add ခဲ့သူ (နောက်ဆုံး ၇ ရက်): <b>{inv_count} ယောက်</b>",
         parse_mode="HTML"
     )
 
