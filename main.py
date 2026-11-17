@@ -43,7 +43,7 @@ active_duels = {}
 last_duel_created_time = 0
 
 MESSAGE_TARGET = 130
-CHAT_PARTICIPATION_PERCENT = 0.05  # 5% (အနည်းဆုံး စာ ၆ ကြောင်း ဝင်ပြောထားရမည်)
+CHAT_PARTICIPATION_PERCENT = 0.05
 
 chat_stats = {
     "count": 0,
@@ -57,7 +57,6 @@ chat_stats = {
     "claimed_drop_msg_id": None
 }
 
-# အရုပ် / Profile Gift စာရင်း (ဈေးနှုန်းအလိုက်)
 GIFT_ITEMS = {
     "heart": {"name": "💝 အသည်းဖဲကြိုး", "price": 1500},
     "bear": {"name": "🧸 ဝက်ဝံရုပ်", "price": 1500},
@@ -105,7 +104,6 @@ def is_general_topic(message: types.Message) -> bool:
     return message.message_thread_id is None or message.message_thread_id == GENERAL_TOPIC_ID
 
 async def announce_and_pin_both_topics(text: str):
-    """Spin Topic နှင့် General Topic ၂ နေရာလုံးတွင် စာပို့ပြီး Pin ထိုးပေးမည်"""
     try:
         m_spin = await bot.send_message(
             chat_id=SPIN_GROUP_ID,
@@ -122,7 +120,7 @@ async def announce_and_pin_both_topics(text: str):
         print(f"Pin Spin Topic Error: {e}")
 
     try:
-        gen_kwargs = {"chat_id": SPIN_GROUP_ID, "text": text, "parse_mode="HTML"}
+        gen_kwargs = {"chat_id": SPIN_GROUP_ID, "text": text, "parse_mode": "HTML"}
         if GENERAL_TOPIC_ID and GENERAL_TOPIC_ID != 1:
             gen_kwargs["message_thread_id"] = GENERAL_TOPIC_ID
         m_gen = await bot.send_message(**gen_kwargs)
@@ -1614,7 +1612,7 @@ async def handle_chat_activity(message: types.Message):
 
                     if user_spoken < min_required:
                         warn_msg = await message.reply(
-                            "သင်သည် ယခုကုတ်ကျလာစေရန်  စကားဝင်ရောက် ပြောဆိုထားခြင်းမရှိ၍ ကောက်ယူ၍မရပါ"
+                            "သင်သည် ယခုကုတ်ကျလာစေရန် စကားဝင်ရောက် ပြောဆိုထားခြင်းမရှိ၍ ကောက်ယူ၍မရပါ"
                         )
                         await asyncio.sleep(5)
                         try:
