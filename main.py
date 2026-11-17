@@ -43,7 +43,7 @@ active_duels = {}
 last_duel_created_time = 0
 
 MESSAGE_TARGET = 130
-CHAT_PARTICIPATION_PERCENT = 0.10  # အနည်းဆုံး 10% (၁၃ ကြောင်း) ဝင်ပြောထားရမည်
+CHAT_PARTICIPATION_PERCENT = 0.05  # 5% (အနည်းဆုံး စာ ၆ ကြောင်း ဝင်ပြောထားရမည်)
 
 chat_stats = {
     "count": 0,
@@ -57,7 +57,7 @@ chat_stats = {
     "claimed_drop_msg_id": None
 }
 
-# အရုပ် / Profile Gift စာရင်း (ပုံပါအတိုင်း ဈေးနှုန်းနှင့်တကွ)
+# အရုပ် / Profile Gift စာရင်း (ဈေးနှုန်းအလိုက်)
 GIFT_ITEMS = {
     "heart": {"name": "💝 အသည်းဖဲကြိုး", "price": 1500},
     "bear": {"name": "🧸 ဝက်ဝံရုပ်", "price": 1500},
@@ -102,12 +102,10 @@ def is_valid_chat_message(text: str) -> bool:
     return True
 
 def is_general_topic(message: types.Message) -> bool:
-    # General Topic (ဖဲဆော့ရသည့်အခန်း) တစ်ခုတည်းကိုသာ အတိအကျ စစ်ဆေးခြင်း
     return message.message_thread_id is None or message.message_thread_id == GENERAL_TOPIC_ID
 
 async def announce_and_pin_both_topics(text: str):
     """Spin Topic နှင့် General Topic ၂ နေရာလုံးတွင် စာပို့ပြီး Pin ထိုးပေးမည်"""
-    # 1. Spin Topic တွင် ပို့ပြီး Pin ထိုးခြင်း
     try:
         m_spin = await bot.send_message(
             chat_id=SPIN_GROUP_ID,
@@ -123,7 +121,6 @@ async def announce_and_pin_both_topics(text: str):
     except Exception as e:
         print(f"Pin Spin Topic Error: {e}")
 
-    # 2. General Topic (တုံကင်ချပေးသည့် Topic) တွင် ပို့ပြီး Pin ထိုးခြင်း
     try:
         gen_kwargs = {"chat_id": SPIN_GROUP_ID, "text": text, "parse_mode": "HTML"}
         if GENERAL_TOPIC_ID and GENERAL_TOPIC_ID != 1:
@@ -256,7 +253,7 @@ def compare_shan_hands(p1_hand: list, p2_hand: list) -> str:
     return "p1" if r1 >= r2 else "p2"
 
 # ==========================================================
-# 👥 Group Member Invite Tracking (Fixed for both Message & ChatMember)
+# 👥 Group Member Invite Tracking (Silent - No Group Spam)
 # ==========================================================
 async def process_invite_reward(inviter: types.User, new_member: types.User):
     if not inviter or not new_member:
@@ -267,19 +264,7 @@ async def process_invite_reward(inviter: types.User, new_member: types.User):
     async with invite_lock:
         await db.get_or_create_user(inviter.id, inviter.username, inviter.first_name)
         await db.get_or_create_user(new_member.id, new_member.username, new_member.first_name)
-        token_added, total_invites = await db.record_invitation(inviter.id, new_member.id)
-
-        if token_added:
-            inv_mention = f"@{html.escape(inviter.username)}" if inviter.username else f'<a href="tg://user?id={inviter.id}">{clean_name(inviter.first_name)}</a>'
-            try:
-                await bot.send_message(
-                    chat_id=SPIN_GROUP_ID,
-                    message_thread_id=SPIN_TOPIC_ID,
-                    text=f"🎟️ <b>{inv_mention}</b> သည် သူငယ်ချင်း {total_invites} ဦး ပြည့်မြောက်အောင် Add နိုင်ခဲ့သဖြင့် <b>Free Spin Token +1</b> ရရှိသွားပါပြီ!",
-                    parse_mode="HTML"
-                )
-            except Exception as e:
-                print(f"Invite Announce Error: {e}")
+        await db.record_invitation(inviter.id, new_member.id)
 
 @dp.message(F.new_chat_members)
 async def new_member_message_handler(message: types.Message):
@@ -1541,7 +1526,7 @@ async def handle_chat_activity(message: types.Message):
 
                     if user_spoken < min_required:
                         warn_msg = await message.reply(
-                            "သင်သည် ယခု code ကျစေရန်အတွက် GP ၏ စကားဝိုင်းထဲတွင် လုံလောက်စွာ ပါဝင် စကားပြောဆိုထားခြင်းမရှိပါ ။"
+                            "သင်သည် ယခုကုတ်ကျလာစေရန်  စကားဝင်ရောက် ပြောဆိုထားခြင်းမရှိ၍ ကောက်ယူ၍မရပါ"
                         )
                         await asyncio.sleep(5)
                         try:
