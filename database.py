@@ -131,15 +131,15 @@ async def deduct_tokens(user_id: int, amount: int) -> int:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
-async def record_invitation(inviter_id: int, new_member_id: int) -> bool:
+async def record_invitation(inviter_id: int, new_member_id: int) -> tuple[bool, int]:
     if inviter_id == new_member_id:
-        return False
+        return False, 0
     async with get_db() as db:
         cursor = await db.execute("SELECT user_id FROM invited_members WHERE user_id = ?", (new_member_id,))
         if await cursor.fetchone():
-            return False
+            return False, 0
         
-        await db.execute("INSERT OR IGNORE INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
+        await db.execute("INSERT INTO invited_members (user_id, inviter_id) VALUES (?, ?)", (new_member_id, inviter_id))
         count_cursor = await db.execute("SELECT COUNT(*) FROM invited_members WHERE inviter_id = ?", (inviter_id,))
         total_invites = (await count_cursor.fetchone())[0]
         
@@ -149,7 +149,7 @@ async def record_invitation(inviter_id: int, new_member_id: int) -> bool:
             token_added = True
             
         await db.commit()
-        return token_added
+        return token_added, total_invites
 
 async def spin_wheel(user_id: int, is_owner: bool = False):
     today = datetime.now().strftime("%Y-%m-%d")
@@ -160,7 +160,8 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
             return "NO_TOKEN", 0
         tokens, losses, coins = user
 
-        if not is_owner and coins >= 3000:
+        # ၃,၀၀၀ မှ ၁၀,၀၀၀ သို့ ပြောင်းလဲထားသည်
+        if not is_owner and coins >= 10000:
             return "MAX_BALANCE_REACHED", coins
 
         if tokens < 1:
@@ -193,7 +194,8 @@ async def spin_wheel(user_id: int, is_owner: bool = False):
 
 async def transfer_gift_coins(sender_id: int, receiver_id: int, is_owner: bool = False):
     today_start = datetime.now().strftime("%Y-%m-%d 00:00:00")
-    two_days_ago = (datetime.now() - timedelta(hours=48)).strftime("%Y-%m-%d %H:%M:%S")
+    # ၄၈ နာရီမှ ၂၀ နာရီသို့ ပြောင်းလဲထားသည်
+    cooldown_ago = (datetime.now() - timedelta(hours=20)).strftime("%Y-%m-%d %H:%M:%S")
 
     async with get_db() as db:
         await db.execute("""
@@ -216,10 +218,10 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int, is_owner: bool =
 
             c = await db.execute(
                 "SELECT COUNT(*) FROM transfers WHERE sender_id = ? AND receiver_id = ? AND created_at >= ?",
-                (sender_id, receiver_id, two_days_ago)
+                (sender_id, receiver_id, cooldown_ago)
             )
             if (await c.fetchone())[0] > 0:
-                return False, "COOLDOWN_48H", sender_coins
+                return False, "COOLDOWN_20H", sender_coins
 
             c = await db.execute(
                 "SELECT COUNT(DISTINCT receiver_id) FROM transfers WHERE sender_id = ? AND created_at >= ?",
@@ -275,7 +277,8 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
                 (player1_id, player2_id, player2_id, player1_id, ten_mins_ago)
             )
             rows = await c.fetchall()
-            if len(rows) >= 5:  # ၃ ပွဲ အစား ၅ ပွဲသို့ တိုးမြှင့်ခြင်း
+            # ၅ ပွဲမှ ၁၀ ပွဲသို့ တိုးမြှင့်ထားသည်
+            if len(rows) >= 10:
                 return False, "PAIR_COOLDOWN_10M"
 
         return True, "ELIGIBLE"
