@@ -354,22 +354,16 @@ def _draw_suit_shape(draw: ImageDraw.ImageDraw, suit: str, cx: int, cy: int, siz
         draw.polygon(stem, fill=color)
 
 def _draw_single_card(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int, rank: str, suit: str, rank_font, center_font):
-    # Shadow
     draw.rounded_rectangle([x + 4, y + 5, x + w + 4, y + h + 5], radius=14, fill=(8, 35, 22))
-    # Card base
     draw.rounded_rectangle([x, y, x + w, y + h], radius=14, fill=(252, 252, 250), outline=(210, 210, 205), width=2)
 
     is_red = ("♥" in suit or "♦" in suit)
     color = (212, 28, 38) if is_red else (25, 28, 34)
 
-    # Top-left rank & mini suit
     draw.text((x + 12, y + 8), rank, fill=color, font=rank_font)
     _draw_suit_shape(draw, suit, x + 23, y + 48, 18, color)
-
-    # Center big suit
     _draw_suit_shape(draw, suit, x + w // 2, y + h // 2 + 8, 46, color)
 
-    # Bottom-right rank
     bbox = draw.textbbox((0, 0), rank, font=rank_font)
     rw = bbox[2] - bbox[0]
     rh = bbox[3] - bbox[1]
@@ -384,9 +378,7 @@ def generate_shan_result_image(p1_name: str, p1_hand: list, p2_name: str, p2_han
     img = Image.new("RGB", (W, H), (15, 68, 44))
     draw = ImageDraw.Draw(img)
 
-    # Outer table border
     draw.rounded_rectangle([12, 12, W - 12, H - 12], radius=24, fill=(18, 82, 53), outline=(218, 178, 76), width=4)
-    # Center divider line
     draw.line([(32, H // 2), (W - 32, H // 2)], fill=(218, 178, 76), width=2)
 
     title_font = _load_font(22, bold=True)
@@ -407,7 +399,6 @@ def generate_shan_result_image(p1_name: str, p1_hand: list, p2_name: str, p2_han
 
         draw.text((34, top_y), f"{label}{status_tag}", fill=header_color, font=title_font)
 
-        # Right-aligned hand score badge
         b_bbox = draw.textbbox((0, 0), badge_text, font=badge_font)
         bw = b_bbox[2] - b_bbox[0]
         pill_bg = (212, 165, 42) if is_win else (11, 52, 34)
@@ -415,7 +406,6 @@ def generate_shan_result_image(p1_name: str, p1_hand: list, p2_name: str, p2_han
         draw.rounded_rectangle([W - bw - 56, top_y - 2, W - 32, top_y + 28], radius=10, fill=pill_bg)
         draw.text((W - bw - 44, top_y + 1), badge_text, fill=pill_fg, font=badge_font)
 
-        # Cards row
         card_w, card_h = 112, 156
         gap = 24
         total_cards_w = len(hand) * card_w + (len(hand) - 1) * gap
@@ -583,10 +573,13 @@ async def finish_duel(match_id: str):
         deck = duel["deck"]
         thread_id = duel.get("thread_id")
 
-        if not is_natural_win(p1_hand) and len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
-            p1_hand.append(deck.pop())
-        if not is_natural_win(p2_hand) and len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
-            p2_hand.append(deck.pop())
+        # တစ်ယောက်ယောက်က ဖဲ ၂ ချပ်ဖြင့် ၈ သို့မဟုတ် ၉ ဒေါင်းပါက မည်သူမျှ ၃ ကတ်မြောက် မဆွဲတော့ဘဲ ၂ ကတ်စီဖြင့်သာ ပြမည်
+        any_natural = is_natural_win(p1_hand) or is_natural_win(p2_hand)
+        if not any_natural:
+            if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
+                p1_hand.append(deck.pop())
+            if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
+                p2_hand.append(deck.pop())
 
         duel["p1_action"] = True
         duel["p2_action"] = True
@@ -615,15 +608,6 @@ async def finish_duel(match_id: str):
 
         await asyncio.sleep(0.6)
 
-        p1_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p1_hand])
-        p2_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p2_hand])
-
-        score_board_text = (
-            f"🃏 <b>ရှမ်းကိုးမီး ရလဒ်:</b>\n"
-            f"👤 {clean_name(p1_name)}: {p1_cards_str} ({get_hand_title(p1_hand)})\n"
-            f"👤 {clean_name(p2_name)}: {p2_cards_str} ({get_hand_title(p2_hand)})"
-        )
-
         send_kwargs = {"chat_id": duel["chat_id"], "parse_mode": "HTML"}
         if thread_id:
             send_kwargs["message_thread_id"] = thread_id
@@ -635,7 +619,7 @@ async def finish_duel(match_id: str):
                     generate_shan_result_image, p1_name, p1_hand, p2_name, p2_hand, winner
                 )
                 photo_file = BufferedInputFile(img_bytes, filename="shan_result.png")
-                photo_kwargs = {"chat_id": duel["chat_id"], "photo": photo_file, "caption": score_board_text, "parse_mode": "HTML"}
+                photo_kwargs = {"chat_id": duel["chat_id"], "photo": photo_file}
                 if thread_id:
                     photo_kwargs["message_thread_id"] = thread_id
                 score_msg = await bot.send_photo(**photo_kwargs)
@@ -645,8 +629,15 @@ async def finish_duel(match_id: str):
                 print(f"Send Duel Image Error: {e}")
 
         if not sent_visual:
+            p1_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p1_hand])
+            p2_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p2_hand])
+            fallback_text = (
+                f"🃏 <b>ရှမ်းကိုးမီး ရလဒ်:</b>\n"
+                f"👤 {clean_name(p1_name)}: {p1_cards_str} ({get_hand_title(p1_hand)})\n"
+                f"👤 {clean_name(p2_name)}: {p2_cards_str} ({get_hand_title(p2_hand)})"
+            )
             try:
-                score_msg = await bot.send_message(text=score_board_text, **send_kwargs)
+                score_msg = await bot.send_message(text=fallback_text, **send_kwargs)
                 asyncio.create_task(auto_delete_message(duel["chat_id"], score_msg.message_id, delay=30))
             except Exception as e:
                 print(f"Send Duel Cards Error: {e}")
