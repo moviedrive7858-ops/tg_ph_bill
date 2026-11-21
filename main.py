@@ -1,4 +1,5 @@
 import os
+import io
 import time
 import asyncio
 import random
@@ -14,6 +15,12 @@ from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, BufferedIn
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+
+try:
+    from PIL import Image, ImageDraw, ImageFont
+    PIL_AVAILABLE = True
+except ImportError:
+    PIL_AVAILABLE = False
 
 import database as db
 
@@ -204,7 +211,7 @@ async def expire_challenge_task(challenge_id: str, chat_id: int, message_id: int
                 pass
 
 # ==========================================================
-# 🃏 Shan Koe Mee Helper Functions
+# 🃏 Shan Koe Mee Helper Functions & Card Image Generator
 # ==========================================================
 SUITS = ["♣️", "♦️", "♥️", "♠️"]
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
@@ -222,15 +229,63 @@ def calculate_hand_score(hand: list) -> int:
 def is_natural_win(hand: list) -> bool:
     return len(hand) == 2 and calculate_hand_score(hand) in [8, 9]
 
+def is_three_of_a_kind(hand: list) -> bool:
+    return len(hand) == 3 and (hand[0][0] == hand[1][0] == hand[2][0])
+
+def is_same_suit(hand: list) -> bool:
+    if len(hand) < 2:
+        return False
+    first_suit = hand[0][1]
+    return all(card[1] == first_suit for card in hand)
+
+def get_hand_multiplier(hand: list) -> int:
+    if is_three_of_a_kind(hand):
+        return 5
+    if len(hand) == 3 and is_same_suit(hand):
+        return 3
+    if len(hand) == 2 and is_same_suit(hand):
+        return 2
+    return 1
+
+def get_hand_payout_details(hand: list) -> tuple:
+    mult = get_hand_multiplier(hand)
+    if mult == 5:
+        return 5, 140, 160
+    elif mult == 3:
+        return 3, 100, 110
+    elif mult == 2:
+        return 2, 70, 80
+    else:
+        return 1, 40, 50
+
 def get_hand_title(hand: list) -> str:
     total_score = calculate_hand_score(hand)
+    mult = get_hand_multiplier(hand)
+    mult_tag = f" [{mult} ဆ]" if mult > 1 else ""
+
+    if is_three_of_a_kind(hand):
+        return f"👑 ဇာတ်တူ ၃ ချပ် ({hand[0][0]}){mult_tag}"
     if len(hand) == 2 and total_score == 9:
-        return "🔥 ရှမ်းကိုး (၉)"
+        return f"🔥 ရှမ်းကိုး (၉){mult_tag}"
     elif len(hand) == 2 and total_score == 8:
-        return "⚡ ရှစ်ဒေါင်း (၈)"
+        return f"⚡ ရှစ်ဒေါင်း (၈){mult_tag}"
     elif total_score == 0:
-        return "💀 ဘူး (၀)"
-    return f"{total_score} မှတ်"
+        return f"💀 ဘူး (၀){mult_tag}"
+    return f"{total_score} မှတ်{mult_tag}"
+
+def get_hand_english_badge(hand: list) -> str:
+    total_score = calculate_hand_score(hand)
+    mult = get_hand_multiplier(hand)
+    m_str = f" ({mult}x)" if mult > 1 else ""
+    if is_three_of_a_kind(hand):
+        return f"TRIPS {hand[0][0]}{m_str}"
+    if len(hand) == 2 and total_score == 9:
+        return f"SHAN 9{m_str}"
+    if len(hand) == 2 and total_score == 8:
+        return f"DOUNG 8{m_str}"
+    if total_score == 0:
+        return f"BOO (0){m_str}"
+    return f"{total_score} PTS{m_str}"
 
 def get_hand_rank(hand: list) -> tuple:
     score = calculate_hand_score(hand)
@@ -239,6 +294,8 @@ def get_hand_rank(hand: list) -> tuple:
         tier = 100
     elif is_two and score == 8:
         tier = 95
+    elif is_three_of_a_kind(hand):
+        tier = 90
     else:
         tier = (score * 8) + (2 if is_two else 1)
 
@@ -252,6 +309,126 @@ def compare_shan_hands(p1_hand: list, p2_hand: list) -> str:
     r1 = get_hand_rank(p1_hand)
     r2 = get_hand_rank(p2_hand)
     return "p1" if r1 >= r2 else "p2"
+
+def _load_font(size: int, bold: bool = False):
+    font_paths = [
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+    ]
+    for path in font_paths:
+        if os.path.exists(path):
+            try:
+                return ImageFont.truetype(path, size)
+            except Exception:
+                pass
+    try:
+        return ImageFont.load_default(size=size)
+    except Exception:
+        return ImageFont.load_default()
+
+def _draw_suit_shape(draw: ImageDraw.ImageDraw, suit: str, cx: int, cy: int, size: int, color: tuple):
+    half = size // 2
+    if "♦" in suit:
+        pts = [(cx, cy - half), (cx + int(half * 0.78), cy), (cx, cy + half), (cx - int(half * 0.78), cy)]
+        draw.polygon(pts, fill=color)
+    elif "♥" in suit:
+        r = max(2, int(size * 0.25))
+        draw.ellipse([cx - r * 2, cy - half + int(r * 0.3), cx, cy - half + r * 2 + int(r * 0.3)], fill=color)
+        draw.ellipse([cx, cy - half + int(r * 0.3), cx + r * 2, cy - half + r * 2 + int(r * 0.3)], fill=color)
+        pts = [(cx - r * 2, cy - half + r + int(r * 0.2)), (cx + r * 2, cy - half + r + int(r * 0.2)), (cx, cy + half)]
+        draw.polygon(pts, fill=color)
+    elif "♠" in suit:
+        r = max(2, int(size * 0.24))
+        pts = [(cx, cy - half), (cx + r * 2, cy + int(r * 0.4)), (cx - r * 2, cy + int(r * 0.4))]
+        draw.polygon(pts, fill=color)
+        draw.ellipse([cx - r * 2, cy - int(r * 0.5), cx, cy + int(r * 1.4)], fill=color)
+        draw.ellipse([cx, cy - int(r * 0.5), cx + r * 2, cy + int(r * 1.4)], fill=color)
+        stem = [(cx, cy + int(r * 0.5)), (cx + int(r * 0.9), cy + half), (cx - int(r * 0.9), cy + half)]
+        draw.polygon(stem, fill=color)
+    else:  # ♣️
+        r = max(2, int(size * 0.23))
+        draw.ellipse([cx - r, cy - half, cx + r, cy - half + r * 2], fill=color)
+        draw.ellipse([cx - int(r * 1.95), cy - int(r * 0.4), cx - int(r * 0.05), cy + int(r * 1.5)], fill=color)
+        draw.ellipse([cx + int(r * 0.05), cy - int(r * 0.4), cx + int(r * 1.95), cy + int(r * 1.5)], fill=color)
+        stem = [(cx, cy + int(r * 0.4)), (cx + int(r * 0.9), cy + half), (cx - int(r * 0.9), cy + half)]
+        draw.polygon(stem, fill=color)
+
+def _draw_single_card(draw: ImageDraw.ImageDraw, x: int, y: int, w: int, h: int, rank: str, suit: str, rank_font, center_font):
+    # Shadow
+    draw.rounded_rectangle([x + 4, y + 5, x + w + 4, y + h + 5], radius=14, fill=(8, 35, 22))
+    # Card base
+    draw.rounded_rectangle([x, y, x + w, y + h], radius=14, fill=(252, 252, 250), outline=(210, 210, 205), width=2)
+
+    is_red = ("♥" in suit or "♦" in suit)
+    color = (212, 28, 38) if is_red else (25, 28, 34)
+
+    # Top-left rank & mini suit
+    draw.text((x + 12, y + 8), rank, fill=color, font=rank_font)
+    _draw_suit_shape(draw, suit, x + 23, y + 48, 18, color)
+
+    # Center big suit
+    _draw_suit_shape(draw, suit, x + w // 2, y + h // 2 + 8, 46, color)
+
+    # Bottom-right rank
+    bbox = draw.textbbox((0, 0), rank, font=rank_font)
+    rw = bbox[2] - bbox[0]
+    rh = bbox[3] - bbox[1]
+    draw.text((x + w - rw - 12, y + h - rh - 14), rank, fill=color, font=rank_font)
+
+def _safe_ascii_label(name: str, fallback: str) -> str:
+    cleaned = re.sub(r"[^\x20-\x7E]", "", str(name or "")).strip()
+    return cleaned[:16] if cleaned else fallback
+
+def generate_shan_result_image(p1_name: str, p1_hand: list, p2_name: str, p2_hand: list, winner: str) -> bytes:
+    W, H = 720, 520
+    img = Image.new("RGB", (W, H), (15, 68, 44))
+    draw = ImageDraw.Draw(img)
+
+    # Outer table border
+    draw.rounded_rectangle([12, 12, W - 12, H - 12], radius=24, fill=(18, 82, 53), outline=(218, 178, 76), width=4)
+    # Center divider line
+    draw.line([(32, H // 2), (W - 32, H // 2)], fill=(218, 178, 76), width=2)
+
+    title_font = _load_font(22, bold=True)
+    badge_font = _load_font(19, bold=True)
+    rank_font = _load_font(26, bold=True)
+    center_font = _load_font(34, bold=True)
+
+    players = [
+        ("p1", _safe_ascii_label(p1_name, "Player 1"), p1_hand, 26),
+        ("p2", _safe_ascii_label(p2_name, "Player 2"), p2_hand, H // 2 + 16),
+    ]
+
+    for key, label, hand, top_y in players:
+        is_win = (winner == key)
+        badge_text = get_hand_english_badge(hand)
+        header_color = (255, 224, 102) if is_win else (235, 245, 240)
+        status_tag = "  [WINNER]" if is_win else ""
+
+        draw.text((34, top_y), f"{label}{status_tag}", fill=header_color, font=title_font)
+
+        # Right-aligned hand score badge
+        b_bbox = draw.textbbox((0, 0), badge_text, font=badge_font)
+        bw = b_bbox[2] - b_bbox[0]
+        pill_bg = (212, 165, 42) if is_win else (11, 52, 34)
+        pill_fg = (20, 20, 20) if is_win else (220, 235, 225)
+        draw.rounded_rectangle([W - bw - 56, top_y - 2, W - 32, top_y + 28], radius=10, fill=pill_bg)
+        draw.text((W - bw - 44, top_y + 1), badge_text, fill=pill_fg, font=badge_font)
+
+        # Cards row
+        card_w, card_h = 112, 156
+        gap = 24
+        total_cards_w = len(hand) * card_w + (len(hand) - 1) * gap
+        start_x = (W - total_cards_w) // 2
+        cards_y = top_y + 42
+
+        for idx, (r, s) in enumerate(hand):
+            cx = start_x + idx * (card_w + gap)
+            _draw_single_card(draw, cx, cards_y, card_w, card_h, r, s, rank_font, center_font)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
 
 # ==========================================================
 # 👥 Group Member Invite Tracking (Silent - No Group Spam)
@@ -383,6 +560,10 @@ async def auto_resolve_duel(match_id: str):
                 await finish_duel(match_id)
     except asyncio.CancelledError:
         pass
+    except Exception as e:
+        print(f"Auto Resolve Duel Error: {e}")
+        async with duel_lock:
+            active_duels.pop(match_id, None)
 
 async def finish_duel(match_id: str):
     global last_duel_created_time
@@ -390,73 +571,97 @@ async def finish_duel(match_id: str):
     if not duel:
         return
 
-    timer_task = duel.get("timer_task")
-    if timer_task and not timer_task.done():
-        timer_task.cancel()
-
-    p1_id, p2_id = duel["p1_id"], duel["p2_id"]
-    p1_name, p2_name = duel["p1_name"], duel["p2_name"]
-    p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
-    deck = duel["deck"]
-    thread_id = duel.get("thread_id")
-
-    if not is_natural_win(p1_hand) and len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
-        p1_hand.append(deck.pop())
-    if not is_natural_win(p2_hand) and len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
-        p2_hand.append(deck.pop())
-
-    duel["p1_action"] = True
-    duel["p2_action"] = True
-
-    winner = compare_shan_hands(p1_hand, p2_hand)
-    if winner == "p1":
-        w_id, l_id = p1_id, p2_id
-        w_name, l_name = p1_name, p2_name
-    else:
-        w_id, l_id = p2_id, p1_id
-        w_name, l_name = p2_name, p1_name
-
     try:
-        await db.record_duel_match(w_id, l_id, p1_id, p2_id)
-    except Exception as e:
-        print(f"Record Duel Error: {e}")
+        timer_task = duel.get("timer_task")
+        current_task = asyncio.current_task()
+        if timer_task and timer_task is not current_task and not timer_task.done():
+            timer_task.cancel()
 
-    try:
-        await bot.delete_message(chat_id=duel["chat_id"], message_id=duel["msg_id"])
-    except Exception:
-        pass
+        p1_id, p2_id = duel["p1_id"], duel["p2_id"]
+        p1_name, p2_name = duel["p1_name"], duel["p2_name"]
+        p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
+        deck = duel["deck"]
+        thread_id = duel.get("thread_id")
 
-    await asyncio.sleep(1)
+        if not is_natural_win(p1_hand) and len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
+            p1_hand.append(deck.pop())
+        if not is_natural_win(p2_hand) and len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
+            p2_hand.append(deck.pop())
 
-    p1_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p1_hand])
-    p2_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p2_hand])
+        duel["p1_action"] = True
+        duel["p2_action"] = True
 
-    score_board_text = (
-        f"🃏 <b>ရှမ်းကိုးမီး ရလဒ်:</b>\n"
-        f"👤 {clean_name(p1_name)}: {p1_cards_str} ({get_hand_title(p1_hand)})\n"
-        f"👤 {clean_name(p2_name)}: {p2_cards_str} ({get_hand_title(p2_hand)})"
-    )
+        winner = compare_shan_hands(p1_hand, p2_hand)
+        if winner == "p1":
+            w_id, l_id = p1_id, p2_id
+            w_name, l_name = p1_name, p2_name
+            w_hand = p1_hand
+        else:
+            w_id, l_id = p2_id, p1_id
+            w_name, l_name = p2_name, p1_name
+            w_hand = p2_hand
 
-    send_kwargs = {"chat_id": duel["chat_id"], "parse_mode": "HTML"}
-    if thread_id:
-        send_kwargs["message_thread_id"] = thread_id
+        mult, win_amt, loss_amt = get_hand_payout_details(w_hand)
 
-    try:
-        score_msg = await bot.send_message(text=score_board_text, **send_kwargs)
-        asyncio.create_task(auto_delete_message(duel["chat_id"], score_msg.message_id, delay=30))
-    except Exception as e:
-        print(f"Send Duel Cards Error: {e}")
+        try:
+            await db.record_duel_match(w_id, l_id, p1_id, p2_id, win_amount=win_amt, loss_amount=loss_amt)
+        except Exception as e:
+            print(f"Record Duel Error: {e}")
 
-    w_mention = f'<a href="tg://user?id={w_id}">{clean_name(w_name)}</a>'
-    l_mention = f'<a href="tg://user?id={l_id}">{clean_name(l_name)}</a>'
-    announce_win_text = f"🎉 {w_mention} သည် {l_mention} ထံမှ <b>+၄၀ ကျပ်</b> အနိုင်ရရှိသွားပါသည်! 👑"
+        try:
+            await bot.delete_message(chat_id=duel["chat_id"], message_id=duel["msg_id"])
+        except Exception:
+            pass
 
-    try:
-        await bot.send_message(text=announce_win_text, **send_kwargs)
-    except Exception as e:
-        print(f"Send Duel Announce Error: {e}")
+        await asyncio.sleep(0.6)
 
-    last_duel_created_time = time.time()
+        p1_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p1_hand])
+        p2_cards_str = " ".join([f"[{c[0]}{c[1]}]" for c in p2_hand])
+
+        score_board_text = (
+            f"🃏 <b>ရှမ်းကိုးမီး ရလဒ်:</b>\n"
+            f"👤 {clean_name(p1_name)}: {p1_cards_str} ({get_hand_title(p1_hand)})\n"
+            f"👤 {clean_name(p2_name)}: {p2_cards_str} ({get_hand_title(p2_hand)})"
+        )
+
+        send_kwargs = {"chat_id": duel["chat_id"], "parse_mode": "HTML"}
+        if thread_id:
+            send_kwargs["message_thread_id"] = thread_id
+
+        sent_visual = False
+        if PIL_AVAILABLE:
+            try:
+                img_bytes = await asyncio.to_thread(
+                    generate_shan_result_image, p1_name, p1_hand, p2_name, p2_hand, winner
+                )
+                photo_file = BufferedInputFile(img_bytes, filename="shan_result.png")
+                photo_kwargs = {"chat_id": duel["chat_id"], "photo": photo_file, "caption": score_board_text, "parse_mode": "HTML"}
+                if thread_id:
+                    photo_kwargs["message_thread_id"] = thread_id
+                score_msg = await bot.send_photo(**photo_kwargs)
+                asyncio.create_task(auto_delete_message(duel["chat_id"], score_msg.message_id, delay=30))
+                sent_visual = True
+            except Exception as e:
+                print(f"Send Duel Image Error: {e}")
+
+        if not sent_visual:
+            try:
+                score_msg = await bot.send_message(text=score_board_text, **send_kwargs)
+                asyncio.create_task(auto_delete_message(duel["chat_id"], score_msg.message_id, delay=30))
+            except Exception as e:
+                print(f"Send Duel Cards Error: {e}")
+
+        w_mention = f'<a href="tg://user?id={w_id}">{clean_name(w_name)}</a>'
+        l_mention = f'<a href="tg://user?id={l_id}">{clean_name(l_name)}</a>'
+        mult_announce = f" ({mult} ဆ)" if mult > 1 else ""
+        announce_win_text = f"🎉 {w_mention} သည် {l_mention} ထံမှ <b>+{win_amt} ကျပ်</b>{mult_announce} အနိုင်ရရှိသွားပါသည်! 👑"
+
+        try:
+            await bot.send_message(text=announce_win_text, **send_kwargs)
+        except Exception as e:
+            print(f"Send Duel Announce Error: {e}")
+    finally:
+        last_duel_created_time = time.time()
 
 @dp.message(Command("lucky"))
 async def cmd_lucky_duel(message: types.Message):
@@ -496,8 +701,8 @@ async def cmd_lucky_duel(message: types.Message):
 
         user_data = await db.get_or_create_user(challenger.id, challenger.username, challenger.first_name)
         if is_owner:
-            if user_data[3] < 50:
-                msg = await message.reply("❌ Owner လက်ကျန်ငွေ ၅၀ ကျပ် မပြည့်တော့ပါသဖြင့် ကစားခွင့်မပြုပါ။")
+            if user_data[3] < 160:
+                msg = await message.reply("❌ Owner လက်ကျန်ငွေ ၁၆၀ ကျပ် မပြည့်တော့ပါသဖြင့် ကစားခွင့်မပြုပါ။")
                 await asyncio.sleep(4)
                 try:
                     await msg.delete()
@@ -506,8 +711,8 @@ async def cmd_lucky_duel(message: types.Message):
                     pass
                 return
         else:
-            if user_data[3] - 50 < 300:
-                msg = await message.reply("❌ လက်ကျန်ငွေ ၃၀၀ အောက်ရောက်မည်ဖြစ်၍ ကစားခွင့်မပြုပါ (အနည်းဆုံး ၃၅၀ ကျပ် ရှိရပါမည်)။")
+            if user_data[3] < 350:
+                msg = await message.reply("❌ လက်ကျန်ငွေ ၃၅၀ ကျပ် မပြည့်သေးပါသဖြင့် ကစားခွင့်မပြုပါ။")
                 await asyncio.sleep(4)
                 try:
                     await msg.delete()
@@ -567,7 +772,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         
         if not eligible:
             if reason == "OWNER_INSUFFICIENT":
-                await callback.answer("Owner လက်ကျန်ငွေ ၅၀ ကျပ် မပြည့်တော့ပါ!", show_alert=True)
+                await callback.answer("Owner လက်ကျန်ငွေ ၁၆၀ ကျပ် မပြည့်တော့ပါ!", show_alert=True)
             elif reason in ["P1_INSUFFICIENT", "P2_INSUFFICIENT"]:
                 await callback.answer("ကစားသူတစ်ဦးတွင် လက်ကျန် ၃၅၀ မပြည့်တော့ပါ!", show_alert=True)
             elif reason == "PAIR_COOLDOWN_10M":
@@ -606,11 +811,14 @@ async def handle_accept_duel(callback: types.CallbackQuery):
     await callback.answer()
 
     if p1_natural or p2_natural:
-        await callback.message.edit_text(
-            f"🃏 <b>ရှမ်းကိုးမီး ပွဲစဉ် စတင်ပါပြီ!</b>\n\n"
-            f"⚡ <b>ဒေါင်း/ရှမ်းကိုး ပေါက်သွားသဖြင့် ဖဲလှန်ပါမည်...</b>",
-            parse_mode="HTML"
-        )
+        try:
+            await callback.message.edit_text(
+                f"🃏 <b>ရှမ်းကိုးမီး ပွဲစဉ် စတင်ပါပြီ!</b>\n\n"
+                f"⚡ <b>ဒေါင်း/ရှမ်းကိုး ပေါက်သွားသဖြင့် ဖဲလှန်ပါမည်...</b>",
+                parse_mode="HTML"
+            )
+        except Exception:
+            pass
         await asyncio.sleep(2.0)
         async with duel_lock:
             await finish_duel(match_id)
@@ -624,14 +832,17 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         ]
     ])
 
-    await callback.message.edit_text(
-        f"🃏 <b>ရှမ်းကိုးမီး ပွဲစဉ် စတင်ပါပြီ!</b>\n\n"
-        f"👤 {clean_name(challenger_name)}: [ 🂠 🂠 ] (⏳ စဉ်းစားနေသည်)\n"
-        f"👤 {clean_name(accepter.first_name)}: [ 🂠 🂠 ] (⏳ စဉ်းစားနေသည်)\n\n"
-        f"⏳ <i>၂၀ စက္ကန့်အတွင်း မရွေးချယ်ပါက အော်တိုဖဲလှန်ပါမည်။</i>",
-        reply_markup=kb,
-        parse_mode="HTML"
-    )
+    try:
+        await callback.message.edit_text(
+            f"🃏 <b>ရှမ်းကိုးမီး ပွဲစဉ် စတင်ပါပြီ!</b>\n\n"
+            f"👤 {clean_name(challenger_name)}: [ 🂠 🂠 ] (⏳ စဉ်းစားနေသည်)\n"
+            f"👤 {clean_name(accepter.first_name)}: [ 🂠 🂠 ] (⏳ စဉ်းစားနေသည်)\n\n"
+            f"⏳ <i>၂၀ စက္ကန့်အတွင်း မရွေးချယ်ပါက အော်တိုဖဲလှန်ပါမည်။</i>",
+            reply_markup=kb,
+            parse_mode="HTML"
+        )
+    except Exception:
+        pass
 
     task = asyncio.create_task(auto_resolve_duel(match_id))
     match_dict["timer_task"] = task
