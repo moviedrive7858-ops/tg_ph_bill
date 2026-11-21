@@ -74,7 +74,6 @@ async def init_db():
         except Exception:
             pass
 
-        # လစဉ်ထွက်ငွေနှင့် စုစုပေါင်းထွက်ငွေ မှတ်သားရန် (ယခုမှစ၍ 0 ဖြင့် စတင်မည်)
         await db.execute("""
             CREATE TABLE IF NOT EXISTS expense_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -275,17 +274,17 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
         p2_coins = r2[0] if r2 else 0
 
         if player1_id == owner_id:
-            if p1_coins < 50:
+            if p1_coins < 160:
                 return False, "OWNER_INSUFFICIENT"
         else:
-            if p1_coins - 50 < 300:
+            if p1_coins < 350:
                 return False, "P1_INSUFFICIENT"
 
         if player2_id == owner_id:
-            if p2_coins < 50:
+            if p2_coins < 160:
                 return False, "OWNER_INSUFFICIENT"
         else:
-            if p2_coins - 50 < 300:
+            if p2_coins < 350:
                 return False, "P2_INSUFFICIENT"
 
         if player1_id != owner_id and player2_id != owner_id:
@@ -304,11 +303,11 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
 
         return True, "ELIGIBLE"
 
-async def record_duel_match(winner_id: int, loser_id: int, player1_id: int, player2_id: int):
+async def record_duel_match(winner_id: int, loser_id: int, player1_id: int, player2_id: int, win_amount: int = 40, loss_amount: int = 50):
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     async with get_db() as db:
-        await db.execute("UPDATE users SET coins = coins + 40 WHERE user_id = ?", (winner_id,))
-        await db.execute("UPDATE users SET coins = MAX(0, coins - 50) WHERE user_id = ?", (loser_id,))
+        await db.execute("UPDATE users SET coins = coins + ? WHERE user_id = ?", (win_amount, winner_id))
+        await db.execute("UPDATE users SET coins = MAX(0, coins - ?) WHERE user_id = ?", (loss_amount, loser_id))
         await db.execute(
             "INSERT INTO duels (player1_id, player2_id, winner_id, match_time) VALUES (?, ?, ?, ?)",
             (player1_id, player2_id, winner_id, now_str)
@@ -394,18 +393,15 @@ async def record_expense(amount: int):
 async def get_financial_summary(owner_id: int = 0):
     current_month = datetime.now().strftime("%Y-%m")
     async with get_db() as db:
-        # ၁။ ယခုလ (၁ ရက် မှ လကုန်အထိ) ထွက်ငွေ
         c_month = await db.execute(
             "SELECT COALESCE(SUM(amount), 0) FROM expense_logs WHERE month_key = ?",
             (current_month,)
         )
         monthly_spent = (await c_month.fetchone())[0]
 
-        # ၂။ စုစုပေါင်း ထွက်ငွေအားလုံး (ယခုမှစ၍)
         c_total = await db.execute("SELECT COALESCE(SUM(amount), 0) FROM expense_logs")
         total_spent = (await c_total.fetchone())[0]
 
-        # ၃။ မန်ဘာများအကောင့်ထဲရှိ မထုတ်ရသေးသော လက်ကျန်ငွေစုစုပေါင်း (Owner မပါ)
         c_users = await db.execute(
             "SELECT COALESCE(SUM(coins), 0) FROM users WHERE user_id != ?",
             (owner_id,)
