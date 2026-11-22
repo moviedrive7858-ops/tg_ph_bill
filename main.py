@@ -3,6 +3,7 @@ import io
 import time
 import asyncio
 import random
+import secrets
 import string
 import re
 import html
@@ -215,6 +216,7 @@ async def expire_challenge_task(challenge_id: str, chat_id: int, message_id: int
 # ==========================================================
 SUITS = ["♣️", "♦️", "♥️", "♠️"]
 RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+sys_rand = secrets.SystemRandom()
 
 def get_card_value(rank: str) -> int:
     if rank == "A":
@@ -302,13 +304,18 @@ def get_hand_rank(hand: list) -> tuple:
     def card_val(c):
         return (RANKS.index(c[0]) * 4) + SUITS.index(c[1])
     
-    max_c = max(card_val(c) for c in hand)
-    return (tier, max_c)
+    sorted_cards = tuple(sorted((card_val(c) for c in hand), reverse=True))
+    return (tier, sorted_cards)
 
 def compare_shan_hands(p1_hand: list, p2_hand: list) -> str:
     r1 = get_hand_rank(p1_hand)
     r2 = get_hand_rank(p2_hand)
-    return "p1" if r1 >= r2 else "p2"
+    if r1 > r2:
+        return "p1"
+    elif r2 > r1:
+        return "p2"
+    else:
+        return sys_rand.choice(["p1", "p2"])
 
 def _load_font(size: int, bold: bool = False):
     font_paths = [
@@ -573,7 +580,6 @@ async def finish_duel(match_id: str):
         deck = duel["deck"]
         thread_id = duel.get("thread_id")
 
-        # တစ်ယောက်ယောက်က ဖဲ ၂ ချပ်ဖြင့် ၈ သို့မဟုတ် ၉ ဒေါင်းပါက မည်သူမျှ ၃ ကတ်မြောက် မဆွဲတော့ဘဲ ၂ ကတ်စီဖြင့်သာ ပြမည်
         any_natural = is_natural_win(p1_hand) or is_natural_win(p2_hand)
         if not any_natural:
             if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
@@ -772,11 +778,15 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
         del active_duels[challenge_id]
 
+        # ဖဲထုပ်ကို SystemRandom ဖြင့် ၃ ကြိမ် မွှေပြီး တစ်လှည့်စီ ဖဲဝေခြင်း (50/50 မျှတစေရန်)
         deck = [(r, s) for r in RANKS for s in SUITS]
-        random.shuffle(deck)
+        for _ in range(3):
+            sys_rand.shuffle(deck)
 
-        p1_hand = [deck.pop(), deck.pop()]
-        p2_hand = [deck.pop(), deck.pop()]
+        p1_hand = [deck.pop()]
+        p2_hand = [deck.pop()]
+        p1_hand.append(deck.pop())
+        p2_hand.append(deck.pop())
         match_id = f"m_{challenger_id}_{accepter.id}_{int(time.time() * 1000)}"
 
         p1_natural = is_natural_win(p1_hand)
