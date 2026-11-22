@@ -85,11 +85,13 @@ def clean_name(name: str) -> str:
     return html.escape(str(name))
 
 def generate_drop_code() -> str:
-    letters = random.choices(string.ascii_uppercase, k=3)
-    digits = random.choices(string.digits, k=2)
-    combined = letters + digits
-    random.shuffle(combined)
-    return "".join(combined)
+    chars = (
+        random.choices(string.ascii_uppercase, k=3)
+        + random.choices(string.ascii_lowercase, k=2)
+        + random.choices(string.digits, k=2)
+    )
+    random.shuffle(chars)
+    return "".join(chars)
 
 def get_random_drop_reward() -> tuple:
     reward_types = ["token", "bill_50", "bill_100"]
@@ -169,11 +171,12 @@ def create_safe_backup_file(backup_filename: str):
 
 async def auto_backup_task():
     while True:
-        await asyncio.sleep(86400)
+        # ၆ နာရီ (၂၁,၆၀၀ စက္ကန့်) တစ်ကြိမ် အော်တို Backup ပို့ပေးမည်
+        await asyncio.sleep(21600)
         try:
-            today = datetime.now().strftime("%Y-%m-%d")
+            now_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
             if os.path.exists(db.DB_NAME) and ADMIN_LOG_GROUP_ID != 0:
-                temp_filename = f"backup_{today}.db"
+                temp_filename = f"backup_auto_{now_stamp}.db"
                 await asyncio.to_thread(create_safe_backup_file, temp_filename)
                 if os.path.exists(temp_filename) and os.path.getsize(temp_filename) > 0:
                     with open(temp_filename, "rb") as f:
@@ -182,7 +185,7 @@ async def auto_backup_task():
                     await bot.send_document(
                         chat_id=ADMIN_LOG_GROUP_ID,
                         document=backup_file,
-                        caption=f"📦 Daily Database Backup ({today})"
+                        caption=f"📦 6-Hour Auto Database Backup ({now_stamp})"
                     )
                 if os.path.exists(temp_filename):
                     os.remove(temp_filename)
@@ -212,7 +215,7 @@ async def expire_challenge_task(challenge_id: str, chat_id: int, message_id: int
                 pass
 
 # ==========================================================
-# 🃏 Shan Koe Mee Helper Functions & Card Image Generator
+# 🃏 Shan Koe Mee Helper Functions & Image Generators
 # ==========================================================
 SUITS = ["♣️", "♦️", "♥️", "♠️"]
 RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
@@ -317,11 +320,18 @@ def compare_shan_hands(p1_hand: list, p2_hand: list) -> str:
     else:
         return sys_rand.choice(["p1", "p2"])
 
-def _load_font(size: int, bold: bool = False):
-    font_paths = [
-        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
-    ]
+def _load_font(size: int, bold: bool = False, mono: bool = False):
+    if mono:
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-Bold.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationMono-Bold.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        ]
+    else:
+        font_paths = [
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        ]
     for path in font_paths:
         if os.path.exists(path):
             try:
@@ -332,6 +342,51 @@ def _load_font(size: int, bold: bool = False):
         return ImageFont.load_default(size=size)
     except Exception:
         return ImageFont.load_default()
+
+def generate_lucky_drop_image(drop_code: str, drop_type: str = "token") -> bytes:
+    W, H = 480, 140
+    is_bill = drop_type in ["bill_50", "bill_100"]
+
+    bg_color = (34, 16, 48) if is_bill else (20, 22, 28)
+    card_bg = (48, 22, 68) if is_bill else (30, 33, 42)
+    border_gold = (255, 205, 64) if is_bill else (218, 175, 65)
+    header_label = "★ RARE BILL ★" if is_bill else "★ LUCKY DROP ★"
+
+    img = Image.new("RGB", (W, H), bg_color)
+    draw = ImageDraw.Draw(img)
+
+    draw.rounded_rectangle([6, 6, W - 6, H - 6], radius=18, fill=card_bg, outline=border_gold, width=3)
+    draw.rounded_rectangle([12, 12, W - 12, H - 12], radius=14, outline=(140, 112, 42), width=1)
+
+    draw.ellipse([-10, H // 2 - 12, 14, H // 2 + 12], fill=bg_color, outline=border_gold, width=2)
+    draw.ellipse([W - 14, H // 2 - 12, W + 10, H // 2 + 12], fill=bg_color, outline=border_gold, width=2)
+
+    top_font = _load_font(15, bold=True)
+    code_font = _load_font(36, bold=True, mono=True)
+    sub_font = _load_font(12, bold=True)
+
+    h_bbox = draw.textbbox((0, 0), header_label, font=top_font)
+    hw = h_bbox[2] - h_bbox[0]
+    draw.text(((W - hw) // 2, 16), header_label, fill=border_gold, font=top_font)
+
+    spaced_code = " ".join(list(drop_code))
+    c_bbox = draw.textbbox((0, 0), spaced_code, font=code_font)
+    cw = c_bbox[2] - c_bbox[0]
+    ch = c_bbox[3] - c_bbox[1]
+    box_w = max(cw + 44, 280)
+    box_x1 = (W - box_w) // 2
+    box_x2 = box_x1 + box_w
+    draw.rounded_rectangle([box_x1, 42, box_x2, 98], radius=10, fill=(14, 16, 22), outline=border_gold, width=2)
+    draw.text(((W - cw) // 2, 42 + (56 - ch) // 2 - 3), spaced_code, fill=(255, 255, 255), font=code_font)
+
+    hint_text = "CASE-SENSITIVE  •  REPLY TO CLAIM"
+    s_bbox = draw.textbbox((0, 0), hint_text, font=sub_font)
+    sw = s_bbox[2] - s_bbox[0]
+    draw.text(((W - sw) // 2, 108), hint_text, fill=(210, 195, 150), font=sub_font)
+
+    buf = io.BytesIO()
+    img.save(buf, format="PNG", optimize=True)
+    return buf.getvalue()
 
 def _draw_suit_shape(draw: ImageDraw.ImageDraw, suit: str, cx: int, cy: int, size: int, color: tuple):
     half = size // 2
@@ -770,10 +825,8 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         if not eligible:
             if reason == "OWNER_INSUFFICIENT":
                 await callback.answer("Owner လက်ကျန်ငွေ ၁၆၀ ကျပ် မပြည့်တော့ပါ!", show_alert=True)
-            elif reason in ["P1_INSUFFICIENT", "P2_INSUFFICIENT"]:
+            else:
                 await callback.answer("ကစားသူတစ်ဦးတွင် လက်ကျန် ၃၅၀ မပြည့်တော့ပါ!", show_alert=True)
-            elif reason == "PAIR_COOLDOWN_10M":
-                await callback.answer("ဤ Player နှင့် ၁၀ ပွဲ ဆော့ပြီးသွားသဖြင့် ၁၀ မိနစ် ပြန်စောင့်ပါ!", show_alert=True)
             return
 
         del active_duels[challenge_id]
@@ -1795,7 +1848,7 @@ async def handle_chat_activity(message: types.Message):
         replied_msg_id = message.reply_to_message.message_id
         async with claim_lock:
             if chat_stats["active_drop_code"] and replied_msg_id == chat_stats["drop_message_id"]:
-                entered_code = text.strip().upper()
+                entered_code = text.strip()
                 if entered_code == chat_stats["active_drop_code"]:
                     min_required = max(1, int(MESSAGE_TARGET * CHAT_PARTICIPATION_PERCENT))
                     user_spoken = chat_stats.get("claim_eligible_counts", {}).get(user.id, 0) + chat_stats["user_counts"].get(user.id, 0)
@@ -1869,22 +1922,41 @@ async def handle_chat_activity(message: types.Message):
             chat_stats["active_drop_code"] = drop_code
             chat_stats["drop_type"] = d_type
 
-        send_kwargs = {"chat_id": message.chat.id, "parse_mode": "HTML"}
-        if message.message_thread_id:
-            send_kwargs["message_thread_id"] = message.message_thread_id
+        sent_drop_msg = None
+        if PIL_AVAILABLE:
+            try:
+                img_bytes = await asyncio.to_thread(generate_lucky_drop_image, drop_code, d_type)
+                photo_file = BufferedInputFile(img_bytes, filename="lucky_drop.png")
+                photo_kwargs = {
+                    "chat_id": message.chat.id,
+                    "photo": photo_file,
+                    "caption": "🎁 <b>ဤပုံကို Reply ထောက်၍ ပုံထဲမှ Code (စာလုံးအကြီး/အသေး အမှန်) ကို ရိုက်ယူပါ!</b>",
+                    "parse_mode": "HTML"
+                }
+                if message.message_thread_id:
+                    photo_kwargs["message_thread_id"] = message.message_thread_id
+                sent_drop_msg = await bot.send_photo(**photo_kwargs)
+            except Exception as e:
+                print(f"Error sending drop photo: {e}")
 
-        try:
-            drop_msg = await bot.send_message(
-                text=f"🎁 <b>Lucky Code :</b> <code>{drop_code}</code>",
-                **send_kwargs
-            )
+        if not sent_drop_msg:
+            send_kwargs = {"chat_id": message.chat.id, "parse_mode": "HTML"}
+            if message.message_thread_id:
+                send_kwargs["message_thread_id"] = message.message_thread_id
+            try:
+                sent_drop_msg = await bot.send_message(
+                    text=f"🎁 <b>Lucky Code :</b> <code>{drop_code}</code>",
+                    **send_kwargs
+                )
+            except Exception as e:
+                print(f"Error dropping code: {e}")
+
+        if sent_drop_msg:
             async with claim_lock:
-                chat_stats["drop_message_id"] = drop_msg.message_id
+                chat_stats["drop_message_id"] = sent_drop_msg.message_id
                 chat_stats["claim_eligible_counts"] = dict(chat_stats["user_counts"])
                 chat_stats["user_counts"].clear()
-            asyncio.create_task(expire_drop_code_task(drop_code, message.chat.id, drop_msg.message_id, delay=180))
-        except Exception as e:
-            print(f"Error dropping code: {e}")
+            asyncio.create_task(expire_drop_code_task(drop_code, message.chat.id, sent_drop_msg.message_id, delay=180))
 
 # ==========================================================
 # 🚀 Startup
