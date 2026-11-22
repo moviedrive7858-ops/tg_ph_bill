@@ -263,8 +263,6 @@ async def transfer_gift_coins(sender_id: int, receiver_id: int, is_owner: bool =
         return True, "SUCCESS", new_sender_coins
 
 async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int = 0):
-    ten_mins_ago = (datetime.now() - timedelta(minutes=10)).strftime("%Y-%m-%d %H:%M:%S")
-
     async with get_db() as db:
         c1 = await db.execute("SELECT coins FROM users WHERE user_id = ?", (player1_id,))
         c2 = await db.execute("SELECT coins FROM users WHERE user_id = ?", (player2_id,))
@@ -286,20 +284,6 @@ async def check_duel_eligibility(player1_id: int, player2_id: int, owner_id: int
         else:
             if p2_coins < 350:
                 return False, "P2_INSUFFICIENT"
-
-        if player1_id != owner_id and player2_id != owner_id:
-            c = await db.execute(
-                """
-                SELECT match_time FROM duels 
-                WHERE ((player1_id = ? AND player2_id = ?) OR (player1_id = ? AND player2_id = ?))
-                  AND match_time >= ?
-                ORDER BY id DESC
-                """,
-                (player1_id, player2_id, player2_id, player1_id, ten_mins_ago)
-            )
-            rows = await c.fetchall()
-            if len(rows) >= 10:
-                return False, "PAIR_COOLDOWN_10M"
 
         return True, "ELIGIBLE"
 
