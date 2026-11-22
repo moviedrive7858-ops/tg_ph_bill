@@ -32,6 +32,7 @@ ADMIN_LOG_GROUP_ID = int(os.environ.get("ADMIN_LOG_GROUP_ID", -1003314192971))
 SPIN_GROUP_ID = -1002672484902
 GENERAL_TOPIC_ID = 1
 SPIN_TOPIC_ID = 1328866
+GAME_TOPIC_ID = 404401
 
 if not BOT_TOKEN:
     raise ValueError("ERROR: Render Environment Variables တွင် BOT_TOKEN မသတ်မှတ်ရသေးပါ။")
@@ -85,7 +86,6 @@ def clean_name(name: str) -> str:
     return html.escape(str(name))
 
 def generate_drop_code() -> str:
-    # စာလုံးအကြီး ၄ လုံး + ဂဏန်း ၃ လုံး = စုစုပေါင်း ၇ လုံး
     letters = random.choices(string.ascii_uppercase, k=4)
     digits = random.choices(string.digits, k=3)
     combined = letters + digits
@@ -111,6 +111,9 @@ def is_valid_chat_message(text: str) -> bool:
 
 def is_general_topic(message: types.Message) -> bool:
     return message.message_thread_id is None or message.message_thread_id == GENERAL_TOPIC_ID
+
+def is_game_topic(message: types.Message) -> bool:
+    return message.message_thread_id == GAME_TOPIC_ID
 
 async def announce_and_pin_both_topics(text: str):
     try:
@@ -170,7 +173,6 @@ def create_safe_backup_file(backup_filename: str):
 
 async def auto_backup_task():
     while True:
-        # ၆ နာရီ (၂၁,၆၀၀ စက္ကန့်) တစ်ကြိမ် အော်တို Backup ပို့ပေးမည်
         await asyncio.sleep(21600)
         try:
             now_stamp = datetime.now().strftime("%Y-%m-%d_%H-%M")
@@ -542,7 +544,7 @@ async def cmd_gift_coin(message: types.Message):
         print(f"Gift Announcement Error: {e}")
 
 # ==========================================================
-# 🃏 Shan Koe Mee Duel (/lucky) - Global Single Active Game Lock
+# 🃏 Shan Koe Mee Duel (/lucky) - Game Topic (404401)
 # ==========================================================
 async def auto_delete_message(chat_id: int, message_id: int, delay: int = 30):
     await asyncio.sleep(delay)
@@ -580,7 +582,6 @@ async def finish_duel(match_id: str):
         p1_name, p2_name = duel["p1_name"], duel["p2_name"]
         p1_hand, p2_hand = duel["p1_hand"], duel["p2_hand"]
         deck = duel["deck"]
-        thread_id = duel.get("thread_id")
 
         any_natural = is_natural_win(p1_hand) or is_natural_win(p2_hand)
         if not any_natural:
@@ -616,9 +617,11 @@ async def finish_duel(match_id: str):
 
         await asyncio.sleep(0.6)
 
-        send_kwargs = {"chat_id": duel["chat_id"], "parse_mode": "HTML"}
-        if thread_id:
-            send_kwargs["message_thread_id"] = thread_id
+        send_kwargs = {
+            "chat_id": duel["chat_id"],
+            "message_thread_id": GAME_TOPIC_ID,
+            "parse_mode": "HTML"
+        }
 
         sent_visual = False
         if PIL_AVAILABLE:
@@ -627,10 +630,11 @@ async def finish_duel(match_id: str):
                     generate_shan_result_image, p1_name, p1_hand, p2_name, p2_hand, winner
                 )
                 photo_file = BufferedInputFile(img_bytes, filename="shan_result.png")
-                photo_kwargs = {"chat_id": duel["chat_id"], "photo": photo_file}
-                if thread_id:
-                    photo_kwargs["message_thread_id"] = thread_id
-                score_msg = await bot.send_photo(**photo_kwargs)
+                score_msg = await bot.send_photo(
+                    chat_id=duel["chat_id"],
+                    message_thread_id=GAME_TOPIC_ID,
+                    photo=photo_file
+                )
                 asyncio.create_task(auto_delete_message(duel["chat_id"], score_msg.message_id, delay=30))
                 sent_visual = True
             except Exception as e:
@@ -666,7 +670,7 @@ async def finish_duel(match_id: str):
 async def cmd_lucky_duel(message: types.Message):
     global last_duel_created_time
 
-    if message.chat.id != SPIN_GROUP_ID or not is_general_topic(message):
+    if message.chat.id != SPIN_GROUP_ID or not is_game_topic(message):
         return
 
     challenger = message.from_user
@@ -726,7 +730,7 @@ async def cmd_lucky_duel(message: types.Message):
             "challenger_name": challenger.first_name,
             "msg_id": None,
             "chat_id": message.chat.id,
-            "thread_id": message.message_thread_id
+            "thread_id": GAME_TOPIC_ID
         }
 
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -760,7 +764,6 @@ async def handle_accept_duel(callback: types.CallbackQuery):
         duel_data = active_duels[challenge_id]
         challenger_id = duel_data["challenger_id"]
         challenger_name = duel_data["challenger_name"]
-        thread_id = duel_data.get("thread_id")
 
         if accepter.id == challenger_id:
             await callback.answer("မိမိစိန်ခေါ်မှုကို မိမိ ပြန်လက်ခံ၍ မရပါ!", show_alert=True)
@@ -803,7 +806,7 @@ async def handle_accept_duel(callback: types.CallbackQuery):
             "p2_action": p2_natural,
             "chat_id": callback.message.chat.id,
             "msg_id": callback.message.message_id,
-            "thread_id": thread_id,
+            "thread_id": GAME_TOPIC_ID,
             "timer_task": None
         }
         active_duels[match_id] = match_dict
@@ -1776,7 +1779,7 @@ async def cmd_restore(message: types.Message):
         await status_msg.edit_text(f"❌ Restore Error: {e}")
 
 # ==========================================================
-# 💬 Chat Drop စနစ် (ဖဲဆော့ရသည့် General Topic တစ်ခုတည်းတွင်သာ အလုပ်လုပ်မည်)
+# 💬 Chat Drop စနစ် (General Topic တစ်ခုတည်းတွင်သာ အလုပ်လုပ်မည်)
 # ==========================================================
 @dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
 async def handle_chat_activity(message: types.Message):
