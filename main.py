@@ -215,7 +215,7 @@ async def expire_challenge_task(challenge_id: str, chat_id: int, message_id: int
 # 🃏 Shan Koe Mee Helper Functions & Card Image Generator
 # ==========================================================
 SUITS = ["♣️", "♦️", "♥️", "♠️"]
-RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"]
+RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
 sys_rand = secrets.SystemRandom()
 
 def get_card_value(rank: str) -> int:
@@ -582,9 +582,9 @@ async def finish_duel(match_id: str):
 
         any_natural = is_natural_win(p1_hand) or is_natural_win(p2_hand)
         if not any_natural:
-            if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 4 and deck:
+            if len(p1_hand) == 2 and calculate_hand_score(p1_hand) <= 3 and deck:
                 p1_hand.append(deck.pop())
-            if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 4 and deck:
+            if len(p2_hand) == 2 and calculate_hand_score(p2_hand) <= 3 and deck:
                 p2_hand.append(deck.pop())
 
         duel["p1_action"] = True
@@ -778,7 +778,6 @@ async def handle_accept_duel(callback: types.CallbackQuery):
 
         del active_duels[challenge_id]
 
-        # ဖဲထုပ်ကို SystemRandom ဖြင့် ၃ ကြိမ် မွှေပြီး တစ်လှည့်စီ ဖဲဝေခြင်း (50/50 မျှတစေရန်)
         deck = [(r, s) for r in RANKS for s in SUITS]
         for _ in range(3):
             sys_rand.shuffle(deck)
@@ -944,7 +943,7 @@ async def handle_stand_card(callback: types.CallbackQuery):
             return
 
         score = calculate_hand_score(hand)
-        if len(hand) == 2 and score <= 4:
+        if len(hand) == 2 and score <= 3:
             await callback.answer(f"⚠️ သင့်အမှတ်မှာ {score} မှတ် ဖြစ်နေ၍ မဆွဲဘဲ နေ၍မရပါ (ဖဲဆွဲပေးပါ)!", show_alert=True)
             return
 
